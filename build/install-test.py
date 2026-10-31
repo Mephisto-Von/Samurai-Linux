@@ -40,6 +40,14 @@ class Failure(RuntimeError):
     pass
 
 
+def _is_hex(token: str) -> bool:
+    try:
+        int(token, 16)
+    except ValueError:
+        return False
+    return True
+
+
 class Log:
     def __init__(self, path: Path):
         self.path = path
@@ -952,12 +960,16 @@ class InstallerTest:
         bootloader fails straight away with something actionable.
         """
         assert self.serial
-        raw = self.serial.command("od -An -tx1 -N512 /dev/sda", timeout=120, check=False)
+        # -v keeps od from collapsing runs of zero bytes into "*", which
+        # would otherwise hide the 512-byte layout we need to inspect.
+        raw = self.serial.command(
+            "od -An -v -tx1 -N512 /dev/sda", timeout=120, check=False
+        )
         (self.work / "boot-sector.txt").write_text(raw + "\n", encoding="utf-8")
-        try:
-            sector = bytes(int(token, 16) for token in raw.split())
-        except ValueError:
-            sector = b""
+        tokens = [
+            token for token in raw.split() if len(token) == 2 and _is_hex(token)
+        ]
+        sector = bytes(int(token, 16) for token in tokens[:512])
         if len(sector) != 512:
             raise Failure("could not read the installed disk's boot sector:\n" + raw)
         if sector[510:512] != b"\x55\xaa":
