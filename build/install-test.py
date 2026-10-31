@@ -201,15 +201,27 @@ class SerialConsole:
         self.log("logged in on the serial console")
 
     def root_shell(self, password: str = "live", timeout: float = 120) -> None:
-        """Start ``sudo -i`` without blocking command() on an interactive shell."""
+        """Start ``sudo -i`` without blocking command() on an interactive shell.
+
+        sudo calls tcsetattr(TCSAFLUSH) when it starts, so anything typed in
+        the instant between its prompt appearing and it reading the terminal is
+        discarded - with no error, it just waits.  Pause before typing, and
+        retry in case an attempt is still swallowed.
+        """
         self.log("opening a root shell with sudo -i")
         self.sendline("sudo -i")
-        _, match = self.expect(
-            r"[Pp]assword:|root@[^\s:]+:[^\r\n]*# ", timeout, "root shell"
-        )
-        if "assword:" in match.group(0):
+        # sudo prints "[sudo] password for user: ", not a bare "password:".
+        prompt = r"[Pp]assword[^\r\n:]*: |root@[^\s:]+:[^\r\n]*# "
+        _, match = self.expect(prompt, timeout, "root shell")
+        for attempt in range(1, 4):
+            if "root@" in match.group(0):
+                break
+            time.sleep(2 * attempt)
+            self.log(f"typing the password for sudo (attempt {attempt})")
             self.sendline(password)
-            self.expect(r"root@[^\s:]+:[^\r\n]*# ", 60, "root shell")
+            _, match = self.expect(prompt, 60, "root shell")
+        if "root@" not in match.group(0):
+            raise Failure(f"sudo -i never gave a root shell (last output {match.group(0)!r})")
         uid = self.command("id -u", timeout=30)
         if uid.strip() != "0":
             raise Failure(f"sudo -i did not give a root shell (id -u = {uid!r})")
@@ -1130,6 +1142,7 @@ class InstallerTest:
 def _fake_shell(sock: socket.socket) -> None:
     """A tiny tty for the self-test: echoes input and answers markers."""
     pending = b""
+    sudo = {"asking": False, "tries": 0}
     while True:
         try:
             chunk = sock.recv(4096)
@@ -1143,7 +1156,19 @@ def _fake_shell(sock: socket.socket) -> None:
             text = line.decode("utf-8", errors="replace")
             sock.sendall((text + "\r\n").encode())
             if text.strip() == "sudo -i":
-                sock.sendall(b"root@samurai:~# ")
+                # Mimic sudo: prompt, then drop the first password typed at it
+                # (sudo flushes queued tty input with TCSAFLUSH).
+                sudo["asking"] = True
+                sudo["tries"] = 0
+                sock.sendall(b"[sudo] password for samurai: ")
+                continue
+            if sudo["asking"]:
+                sudo["tries"] += 1
+                if sudo["tries"] == 1:
+                    sock.sendall(b"\r\n[sudo] password for samurai: ")
+                else:
+                    sudo["asking"] = False
+                    sock.sendall(b"\r\nroot@samurai:~# ")
                 continue
             if text.strip() == "echo password":
                 sock.sendall(b"Password: ")
@@ -1194,7 +1219,14 @@ def self_test() -> int:
             if empty:
                 print(f"FAIL: command() returned tty noise for empty output: {empty!r}", file=sys.stderr)
                 failures += 1
-            console.root_shell()
+            try:
+                console.root_shell(timeout=10)
+            except Failure as exc:
+                print(
+                    f"FAIL: root_shell() did not recover from a dropped password: {exc}",
+                    file=sys.stderr,
+                )
+                failures += 1
             if console.command("id -u") != "0":
                 print("FAIL: root_shell() did not reach the fake root shell", file=sys.stderr)
                 failures += 1
