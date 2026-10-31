@@ -943,6 +943,56 @@ class InstallerTest:
         except Exception as exc:  # noqa: BLE001 - diagnostics are best effort
             self.log(f"could not copy the Calamares log: {exc}")
 
+    def verify_boot_loader(self) -> None:
+        """Check that the installer made the target disk bootable.
+
+        When BIOS cannot start the disk it prints "Booting from Hard Disk..."
+        and hangs, which is indistinguishable from a slow boot until the
+        reboot VM times out. Read the boot sector here instead, so a missing
+        bootloader fails straight away with something actionable.
+        """
+        assert self.serial
+        raw = self.serial.command("od -An -tx1 -N512 /dev/sda", timeout=120, check=False)
+        (self.work / "boot-sector.txt").write_text(raw + "\n", encoding="utf-8")
+        try:
+            sector = bytes(int(token, 16) for token in raw.split())
+        except ValueError:
+            sector = b""
+        if len(sector) != 512:
+            raise Failure("could not read the installed disk's boot sector:\n" + raw)
+        if sector[510:512] != b"\x55\xaa":
+            raise Failure(
+                "the installed disk has no boot signature in its MBR, so BIOS "
+                "cannot start it; boot sector:\n" + raw
+            )
+        if not any(sector[:440]):
+            raise Failure(
+                "the installed disk's MBR boot code is empty, so BIOS cannot "
+                "start it; boot sector:\n" + raw
+            )
+        if not any(sector[446:510]):
+            raise Failure(
+                "the installed disk's MBR has no partition table entries; "
+                "boot sector:\n" + raw
+            )
+        self.log("the installed disk has a bootable MBR")
+        files = self.serial.command(
+            "mkdir -p /mnt/samurai-verify && "
+            "mount -o ro /dev/sda1 /mnt/samurai-verify && "
+            "for f in boot/grub/grub.cfg boot/grub/i386-pc/core.img; do "
+            'if [ -s "/mnt/samurai-verify/$f" ]; then echo "present $f"; '
+            'else echo "missing $f"; fi; done; '
+            "umount /mnt/samurai-verify",
+            timeout=180,
+            check=False,
+        )
+        self.log("installed boot files:\n" + files)
+        if "present boot/grub/grub.cfg" not in files:
+            raise Failure(
+                "the installed system has no /boot/grub/grub.cfg, so GRUB "
+                "cannot boot it; boot files:\n" + files
+            )
+
     def finish_install(self) -> None:
         # Power off from the serial shell rather than clicking the restart
         # checkbox. All install jobs have completed by the finished page.
@@ -1059,6 +1109,7 @@ class InstallerTest:
             self.copy_calamares_log()
             raise
         self.copy_calamares_log()
+        self.verify_boot_loader()
         self.finish_install()
         self.verify_installed_system()
         self.log("install test passed")
