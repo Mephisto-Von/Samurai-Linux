@@ -126,7 +126,7 @@ jobs:
           printf '%s\n' "$SAMURAI_SIGN_KEY_ARMORED" | gpg --batch --import
           iso=$(find dist -maxdepth 1 -name '*.iso' -print -quit)
           test -n "$iso"
-          printf '%s' "$SAMURAI_SIGN_PASSPHRASE" | gpg --batch --pinentry-mode loopback \
+          printf '%s\n' "$SAMURAI_SIGN_PASSPHRASE" | gpg --batch --pinentry-mode loopback \
             --passphrase-fd 0 --armor --detach-sign --local-user "$SAMURAI_SIGN_KEY" \
             --output "$iso.sig" "$iso"
           gpg --verify "$iso.sig" "$iso"
