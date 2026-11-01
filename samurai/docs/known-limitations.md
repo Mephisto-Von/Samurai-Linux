@@ -5,11 +5,15 @@
   the ISO on an ephemeral GitHub runner inside a privileged Debian trixie
   container. Local builds still require a Linux host with 50 GB+ free disk (100
   GB recommended), 4 GB+ RAM (8 GB recommended), and root for `chroot`.
-- **Interactive installation is not yet end-to-end tested in CI** - the ISO
-  builds, passes content verification, and boots to SDDM in QEMU (run
-  `40346119925`). No automated test clicks through Calamares to install to a
-  virtual disk, so partitioning, bootloader installation, and first boot on real
-  hardware should be treated as unverified.
+- **The scripted installer test has not passed yet** - `build/install-test.py`
+  drives the real Calamares UI in QEMU, boots the written disk, and now also
+  boots into Plasma to check theming and GameMode/MangoHud. The ISO builds and
+  boots to SDDM in CI, but no install-test run has been green end to end, so
+  partitioning, bootloader installation, and first boot on real hardware are
+  still unverified. See [`../../build/README.md`](../../build/README.md).
+- **No release, no signature yet** - the repository has no tag and no GitHub
+  Release. The `Sign the ISO` step needs `SAMURAI_SIGN_*` repository secrets
+  before any published image can be verified.
 - **Boot menu and splash are Samurai, the kernel boot logo is not** - the
   isolinux and GRUB menus use the Samurai title, entry labels, selection colour
   and splash images, but the Debian logo drawn by the live kernel and the GRUB

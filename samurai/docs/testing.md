@@ -58,15 +58,29 @@ workflow uses `QEMU_TIMEOUT=300`; the verified 2026-10-26 run reached
 For a GUI run, confirm that SDDM appears and the Plasma live session starts as
 `samurai` with the **Install Samurai Linux** icon.
 
-### 4. Installation Tests (Calamares integrated; automated test not yet available)
-- Guided partitioning completes and the system reboots into the installed OS
-- LUKS-encrypted install unlocks with the passphrase and boots
-- UEFI install creates an EFI system partition and a working GRUB entry
-- BIOS install writes GRUB to the disk and boots
-- The installed system reaches SDDM and accepts the account created in Calamares
-- First-boot setup is manual; there is no Samurai first-boot wizard
+### 4. Installation Tests (automated, not yet green)
+`bash build/install-test.sh <iso>` drives the real Calamares UI in QEMU and
+checks the result over the serial console. Pass criteria:
+
+- Guided partitioning completes and the disk is bootable (MBR, `grub.cfg`,
+  `core.img` present)
+- The installed system boots, logs in on the serial console, and reports the
+  expected hostname, root filesystem, and `/home/samurai` owner
+- The installed kernel and GRUB keep `console=ttyS0,115200n8`
+- With `--branded`, the installed `os-release`, `/etc/default/grub`, GRUB menu,
+  splash and motd are Samurai-branded
+- With `--desktop` (default), SDDM auto-logs into Plasma on the test disk,
+  `plasmashell` runs, the compositor renders a non-blank frame,
+  `samurai-theme set shiro` applies to the live session and is recorded in
+  `kdeglobals`, and GameMode/MangoHud are installed with the interposer library
+
+Still manual, and not automatable here: LUKS unlock on real firmware, UEFI on
+real hardware, Secure Boot, and an actual Proton title with the overlay visible
+(no GPU in QEMU).
 
 ### 5. Desktop and Theme Tests
+Covered by the `--desktop` phase above, except the hardware-only items:
+
 - Kuro applies: background `#111214`, crimson `#B52832`, gold `#B89A59`
 - Shiro applies: background `#F5F0E6`, vermilion `#B52832`, gold `#96733B`
 - Theme persists across logout/reboot
@@ -99,7 +113,7 @@ CPU utilization: 2-5% at desktop
 | Component | Minimum coverage |
 |---|---|
 | ISO boot | QEMU, 1 VM per architecture |
-| Installation | Calamares guided + LUKS + one manual partition (manual verification; automated VM test pending) |
+| Installation | Calamares guided install automated in QEMU (`build/install-test.py`), plus manual LUKS and one manual partition on hardware |
 | Themes | Kuro, Shiro, auto-switch |
 | AI | One local model, local-only mode |
 | Gaming | Steam + Proton + GameMode + MangoHUD |
@@ -110,5 +124,7 @@ CPU utilization: 2-5% at desktop
 - The `live-build` job validates `build/auto/config` in a `debian:trixie` container
 - The hosted ISO workflow (`.github/workflows/build-iso-hosted.yml`) builds the image in a privileged Debian container, runs `build/verify-iso.sh`, and then runs the headless QEMU boot test. Run `40346119925` on commit `028a2ac` passed both stages and reached SDDM.
 - Signed release builds and full install tests run on a self-hosted runner (`.github/workflows/build-iso.yml`)
-- A full Calamares install-to-disk test is still manual; no automated UI driver exists for Calamares 3.3.14
+- A full Calamares install-to-disk test is automated (`build/install-test.py`,
+  driven by `.github/workflows/install-test.yml`); it has not produced a green
+  run yet
 - Defects found are logged and triaged; critical defects block release

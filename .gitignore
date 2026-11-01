@@ -44,6 +44,14 @@ ref/
 # Local build/test tools
 .tools/
 
+# Scratch diagnostics from install-test runs (screenshots, job logs, zips).
+# Anchored: an unanchored docs/ would also swallow samurai/docs/, which ships.
+/.tmp/
+/.tmp-diag/
+/artifacts/
+/utils/
+/docs/
+
 # Python
 __pycache__/
 *.pyc

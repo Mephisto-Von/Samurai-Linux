@@ -114,30 +114,26 @@ armored detached `.sig` when signing is enabled.
 |---|---|
 | Architecture & design documentation | ✅ Complete (aspirational in places) |
 | Kuro / Shiro KDE `.colors` schemes | ✅ Implemented; 22 wallpapers shipped; icons/cursors pending |
-| `samurai-ai` CLI | ✅ Implemented, smoke-tested |
-| `samurai-theme` CLI | ✅ Applies real KDE color schemes |
+| `samurai-ai` CLI | ✅ Implemented, smoke-tested; cloud chat not implemented |
+| `samurai-theme` CLI | ✅ Applies real KDE color schemes (live-session check new) |
 | `samurai-gaming` CLI | ✅ Fixed for Debian (Steam via `steam-installer`) |
 | `live-build` ISO pipeline | ✅ Hosted workflow builds a bootable hybrid ISO |
 | CI (ShellCheck + smoke tests) | ✅ Passing on GitHub Actions |
 | Bootable ISO boot-tested | ✅ QEMU boot to SDDM verified in run `40346119925` |
-| Calamares installer | ✅ ISO builds, content verification passes, and the live ISO boots; interactive install not yet automated |
+| Calamares installer | ⚠️ Ships and branded; the scripted install-to-disk driver (`build/install-test.py`) has not yet produced a green run |
+| Installed-system verification | ⚠️ Drives Calamares over VNC/OCR, boots the disk, checks GRUB branding; new in this tree |
+| Plasma desktop + MangoHUD verification | ⚠️ New CI phase (`--desktop`): auto-logs into Plasma, applies the theme in a live session, checks GameMode/MangoHud. Not yet run |
+| Signed ISO + release key | ⚠️ `Sign the ISO` step added; needs `SAMURAI_SIGN_*` repository secrets |
 | First-boot setup wizard | ❌ Not implemented |
 | Signed APT repository | ❌ Not implemented |
 
-### Verified ISO (2026-10-26)
+### Release status
 
-- CI run: [Build ISO (hosted) #40346119925](https://github.com/Mephisto-Von/Linux-OS/actions/runs/40346119925)
-- Commit: `028a2ac`
-- Artifact: `samurai-linux-iso` in GitHub Actions (expires 2026-11-02)
-- ISO: `samurai-linux-2026.10.26-amd64.iso`, 2,547,646,464 bytes (2.37 GiB)
-- SHA-256: `811ae8b19f4f0296dc485014f5772c587a7e531f6269553e30b0bd4caf9b7555`
-- Content verification: passed (BIOS/UEFI boot records, live kernel/initramfs/squashfs,
-  Calamares and Samurai branding, installer tooling, Samurai CLIs and themes,
-  auto-boot serial console)
-- QEMU boot test: passed (systemd reached `sddm.service`; `samurai login:` appeared
-  on the serial console)
-- Still unverified: a full click-through Calamares installation to disk; see
-  [`samurai/docs/known-limitations.md`](samurai/docs/known-limitations.md)
+No tag and no GitHub Release exist yet. The last pipeline that was green end to
+end is [Build ISO (hosted) run `40346119925`](https://github.com/Mephisto-Von/Samurai-Linux/actions/runs/40346119925)
+(commit `028a2ac`, 2026-10-26) — it predates every installer fix since. Later
+runs built the ISO successfully but failed in the install test, so the newest
+usable ISO artifact is from run `40965845634` (2026-10-29).
 
 `RELEASE_DESCRIPTION.md` is retained as a historical build log. Its commands are
 superseded by `build/README.md` and should not be used.

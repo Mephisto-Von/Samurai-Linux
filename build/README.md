@@ -103,22 +103,64 @@ workflow raises the timeout to 300 seconds; the verified run reached
 120 seconds and may still show boot messages, so the serial log is authoritative.
 For a visual check, use `--gui` and confirm that SDDM/KDE Plasma starts.
 
-### Verified build
+### Install test
 
-The hosted run [40346119925](https://github.com/Mephisto-Von/Linux-OS/actions/runs/40346119925)
-built commit `028a2ac` and passed every stage:
+`build/install-test.sh` (a driver in `build/install-test.py`) boots the ISO with
+a blank disk, logs in on the serial console, becomes root, starts Calamares, and
+drives it through VNC with OCR-based page detection. It then verifies the written
+disk is bootable, boots it, logs in again, and checks the installed system over
+serial (hostname, root filesystem, GRUB config, branding).
 
-| Item | Value |
+Finally, with `--desktop` (the default), it enables SDDM auto-login **on the test
+disk only**, reboots into Plasma, and verifies the things no headless test could
+check before:
+
+- `plasmashell` actually starts and the compositor renders (screenshot is not a
+  blank frame)
+- `samurai-theme set shiro` applies to the live session, and Plasma records
+  `samurai-shiro` in `kdeglobals`
+- the Shiro wallpaper is applied through `plasma-apply-wallpaperimage`
+- `plasma-apply-colorscheme --list-schemes` sees both Samurai schemes
+- `samurai-gaming status` reports `mangohud` and `gamemoderun` installed, and the
+  `mangohud` package ships its interposer library
+
+MangoHUD's overlay *display* and Proton gameplay are not asserted: QEMU here has
+no GPU, so those stay manual hardware checks.
+
+```bash
+bash build/install-test.sh dist/samurai-linux-*-amd64.iso            # with desktop
+bash build/install-test.sh dist/samurai-linux-*-amd64.iso --no-desktop
+bash build/install-test.sh dist/samurai-linux-*-amd64.iso --branded
+python3 build/install-test.py --self-test    # serial logic, no QEMU required
+```
+
+Requires QEMU, `vncdo` (a venv of `vncdotool`), `tesseract`, and Python Pillow.
+Artifacts land in `build/install-test/`: `driver.log`, per-phase serial logs,
+`installed-desktop.txt`, `09-desktop.png`, and every installer screenshot.
+`--self-test` runs on any machine with Python 3, including Windows.
+
+### Signing
+
+`build/build.sh` signs the ISO only when `SAMURAI_SIGN_KEY` is set *and* a
+keyring is available. In CI the image is built inside a container with no
+keyring, so the `Sign the ISO` step in `build-iso-hosted.yml` signs on the
+runner afterwards and exports the public key to `dist/samurai-release-key.asc`.
+It needs three repository secrets:
+
+| Secret | Contents |
 |---|---|
-| ISO | `samurai-linux-2026.10.26-amd64.iso` |
-| Size | 2,547,646,464 bytes (2.37 GiB) |
-| SHA-256 | `811ae8b19f4f0296dc485014f5772c587a7e531f6269553e30b0bd4caf9b7555` |
-| Content verification | Passed |
-| QEMU boot test | Passed; serial log reached `sddm.service` and `samurai login:` |
-| Artifact | `samurai-linux-iso` (expires 2026-11-02) |
+| `SAMURAI_SIGN_KEY` | key id / email the signing key is known by |
+| `SAMURAI_SIGN_KEY_ARMORED` | ASCII-armored **private** signing key |
+| `SAMURAI_SIGN_PASSPHRASE` | passphrase, for `--pinentry-mode loopback` |
 
-The interactive Calamares installation itself is still not automated; see
-[`../samurai/docs/known-limitations.md`](../samurai/docs/known-limitations.md).
+Without them the workflow still produces an unsigned ISO and checksum.
+
+### Current state
+
+The install test has not produced a green run yet: 16 dispatches have each
+reached further than the last, and the last recorded failure was in
+`root_shell()` on the installed system. Manual verification of a real Plasma
+session on hardware is still required before release.
 
 ## What the ISO contains
 

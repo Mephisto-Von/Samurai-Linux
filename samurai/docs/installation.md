@@ -14,16 +14,20 @@ bash build/verify-iso.sh dist/samurai-linux-*-amd64.iso
 bash build/qemu-test.sh dist/samurai-linux-*-amd64.iso --gui
 ```
 
-Or download the `samurai-linux-iso` artifact from the latest successful
+Or download the `samurai-linux-iso` artifact from the latest
 **Build ISO (hosted)** run in GitHub Actions. The workflow builds the ISO,
 verifies the live rootfs, and boots it headlessly in QEMU before uploading it.
-The verified build from 2026-10-26 is
-[run 40346119925](https://github.com/Mephisto-Von/Linux-OS/actions/runs/40346119925):
+
+Artifacts are kept for 7 days, so there is no permanently downloadable ISO yet -
+that is what the first tagged release provides. The last pipeline that passed
+every stage was run `40346119925` (commit `028a2ac`, 2026-10-26):
 
 - `samurai-linux-2026.10.26-amd64.iso`
 - 2,547,646,464 bytes (2.37 GiB)
 - SHA-256 `811ae8b19f4f0296dc485014f5772c587a7e531f6269553e30b0bd4caf9b7555`
-- GitHub Actions artifact `samurai-linux-iso` (expires 2026-11-02)
+
+It predates the installer fixes made since, so treat it as a reference, not as
+the release image.
 
 Verify the download and write it to a USB drive:
 
@@ -119,9 +123,9 @@ guidance.
 
 ## Current Limitations
 
-- The ISO builds, passes content verification, and boots to SDDM in CI (run
-  `40346119925`), but the full interactive installation is not yet automated. A
-  scripted QEMU install to a virtual disk is still future work, so partitioning,
+- The ISO builds, passes content verification, and boots to SDDM in CI, and
+  `build/install-test.py` drives the real Calamares installer to a virtual disk,
+  but no automated install run has been green end to end yet. Partitioning,
   bootloader installation, and first boot on real hardware remain unverified.
 - The bootloader splash and menus use Samurai artwork; the kernel boot logo and
   the installed system's GRUB menu labels still come from Debian's packages.
