@@ -270,16 +270,23 @@ class SerialConsole:
             raise Failure("use background() for a command that ends with '&'")
         marker = f"__SAMURAI_DONE_{self.counter}_{os.getpid()}__"
         self.counter += 1
-        self.sendline(f"{command}; echo {marker}:$?")
+        begin = f"{marker}.BEGIN"
+        self.sendline(f"echo {begin}; {command}; echo {marker}.END:$?")
         output, match = self.expect(
-            re.escape(marker) + r":([0-9]+)", timeout, f"command: {command}"
+            re.escape(marker) + r"\.END:([0-9]+)", timeout, f"command: {command}"
         )
         status = int(match.group(1))
-        lines = output.splitlines()
-        # The tty echoes the command line back before its output.
-        if lines and (marker in lines[0] or lines[0].strip().startswith(command.strip()[:40])):
-            lines = lines[1:]
-        clean = "\n".join(line for line in lines if marker not in line).strip()
+        # expect() removes ANSI, but a command line that fills the 80-column
+        # console makes readline redraw it and the redraw leaves real characters
+        # behind - a stray '?' cost run 16 a false "no /home/samurai" failure on
+        # a system that was fine. So the value is read from after the BEGIN the
+        # shell printed, never from the whole exchange.
+        anchor = output.rfind(begin)
+        if anchor < 0:
+            output = "\n".join(line for line in output.splitlines() if marker not in line)
+        else:
+            output = output[anchor + len(begin) :]
+        clean = output.strip()
         self.log(f"serial: {command} -> {status}")
         if clean:
             self.log("serial output:\n" + clean[-4000:])
@@ -1371,14 +1378,20 @@ def _fake_shell(
                 sock.sendall(f"__SAMURAI_DONE_{marker}:4242\r\n".encode())
                 continue
             if "; echo __SAMURAI_DONE_" in text:
-                command, _, rest = text.rpartition("; echo ")
-                marker = rest.split(":")[0]
-                output = ""
+                head, _, tail = text.rpartition("; echo ")
+                marker = tail.split(":")[0].split(".")[0]
+                prefix = f"echo {marker}.BEGIN; "
+                command = head[len(prefix) :] if head.startswith(prefix) else head
+                answer = f"{marker}.BEGIN\r\n"
                 if command.strip() == "echo hello":
-                    output = "hello\r\n"
+                    answer += "hello\r\n"
                 elif command.strip() == "id -u":
-                    output = "0\r\n"
-                sock.sendall((output + f"{marker}:0\r\n").encode())
+                    answer += "0\r\n"
+                elif command.strip() == "stat -c '%U' /home/samurai":
+                    # Replay the redraw bash wrote over the run-16 serial
+                    # console: cursor motions and a stray "?" after the echo.
+                    answer = "\r\x1b[A" + "\x1b[C" * 60 + "\x1b[K?\r\n" + answer + "samurai\r\n"
+                sock.sendall((answer + f"{marker}.END:0\r\n").encode())
             else:
                 sock.sendall(b"$ ")
 
@@ -1404,6 +1417,12 @@ def self_test() -> int:
             if console.command("echo hello") != "hello":
                 print("FAIL: command() did not return its output", file=sys.stderr)
                 failures += 1
+            if console.command("stat -c '%U' /home/samurai") != "samurai":
+                print(
+                    "FAIL: command() let a readline redraw into the output of a single-line value",
+                    file=sys.stderr,
+                )
+                failures += 1
             if console.background("echo background") != 4242:
                 print("FAIL: background() did not return the shell PID", file=sys.stderr)
                 failures += 1
@@ -1412,7 +1431,7 @@ def self_test() -> int:
                 print(f"FAIL: command() returned tty noise for empty output: {empty!r}", file=sys.stderr)
                 failures += 1
             try:
-                console.root_shell(timeout=10)
+                console.root_shell("", timeout=10)
             except Failure as exc:
                 print(
                     f"FAIL: root_shell() did not recover from a dropped password: {exc}",
