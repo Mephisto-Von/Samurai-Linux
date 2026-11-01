@@ -44,6 +44,9 @@ ref/
 # Local build/test tools
 .tools/
 
+# Per-machine CLI settings and its command allowlist
+/.qoder/
+
 # Scratch diagnostics from install-test runs (screenshots, job logs, zips).
 # Anchored: an unanchored docs/ would also swallow samurai/docs/, which ships.
 /.tmp/
