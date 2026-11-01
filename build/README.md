@@ -155,6 +155,23 @@ It needs three repository secrets:
 
 Without them the workflow still produces an unsigned ISO and checksum.
 
+The project key is `3A83C97CE8876C095DB4A7A985DB958DA0E552F4` ("Samurai Linux
+Release Key"). Its public half is committed at
+[`samurai/keys/samurai-release.asc`](../samurai/keys/samurai-release.asc) so a
+download can be checked without cloning the repository:
+
+```bash
+gpg --import samurai/keys/samurai-release.asc
+gpg --verify samurai-linux-*.iso.sig samurai-linux-*.iso
+```
+
+The private half lives only in the `SAMURAI_SIGN_KEY_ARMORED` secret and in the
+gitignored `.tools/` directory on the maintainer machine - losing it means every
+previously signed ISO can no longer be distinguished from a forgery that claims
+the same name, so keep an offline backup of `.tools/samurai-signing-key.asc`,
+`.tools/samurai-signing-passphrase.txt` and the revocation certificate under
+`.tools/gnupg/openpgp-revocs.d/`.
+
 ### Current state
 
 The install test has not produced a green run yet: 16 dispatches have each
