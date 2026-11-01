@@ -20,6 +20,11 @@ jobs:
     name: Build live ISO (hosted)
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    env:
+      # Kept out of the build container on purpose: build.sh signs when this is
+      # set, and the container has no keyring. Signing happens below, on the
+      # runner, after the image is built.
+      SAMURAI_SIGN_KEY: ${{ secrets.SAMURAI_SIGN_KEY }}
     steps:
       - name: Free disk space
         run: |
@@ -108,6 +113,28 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Sign the ISO
+        if: ${{ env.SAMURAI_SIGN_KEY != '' }}
+        env:
+          SAMURAI_SIGN_KEY_ARMORED: ${{ secrets.SAMURAI_SIGN_KEY_ARMORED }}
+          SAMURAI_SIGN_PASSPHRASE: ${{ secrets.SAMURAI_SIGN_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          export GNUPGHOME
+          GNUPGHOME=$(mktemp -d)
+          chmod 700 "$GNUPGHOME"
+          printf '%s\n' "$SAMURAI_SIGN_KEY_ARMORED" | gpg --batch --import
+          iso=$(find dist -maxdepth 1 -name '*.iso' -print -quit)
+          test -n "$iso"
+          printf '%s' "$SAMURAI_SIGN_PASSPHRASE" | gpg --batch --pinentry-mode loopback \
+            --passphrase-fd 0 --armor --detach-sign --local-user "$SAMURAI_SIGN_KEY" \
+            --output "$iso.sig" "$iso"
+          gpg --verify "$iso.sig" "$iso"
+          # Publish the public half so users can verify without the repo.
+          gpg --armor --export "$SAMURAI_SIGN_KEY" > dist/samurai-release-key.asc
+          sha256sum dist/samurai-release-key.asc
+          ls -lh dist
+
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
@@ -116,6 +143,7 @@ jobs:
             dist/*.iso
             dist/*.sha256
             dist/*.sig
+            dist/*.asc
           if-no-files-found: error
           retention-days: 7
 
