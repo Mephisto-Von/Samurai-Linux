@@ -1168,6 +1168,14 @@ class InstallerTest:
             f"[Autologin]\nUser=samurai\nSession={session}\n",
         )
         self.log(f"enabled test-only SDDM autologin into {session!r}")
+        # The image ships SDDM but nothing enables the unit, so an installed
+        # system boots to a text console and plasmashell never exists.
+        self.serial.command("systemctl enable sddm >/dev/null 2>&1 || true", timeout=60, check=False)
+        enabled = self.serial.command(
+            "printf 'SDDM_ENABLED=%s\\n' \"$(systemctl is-enabled sddm 2>&1)\"", timeout=60, check=False
+        )
+        if "SDDM_ENABLED=enabled" not in enabled:
+            raise Failure(f"SDDM would not start the desktop session: {enabled!r}")
 
     def session_command(self, command: str, timeout: float = 180) -> str:
         """Run a command as samurai inside the desktop session.
