@@ -27,6 +27,7 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -90,6 +91,7 @@ class SerialConsole:
         self.path = path
         self.log = log
         self.buffer = ""
+        self.raw = ""
         self.counter = 0
         self.eof = False
         self._fh = transcript.open("w", encoding="utf-8", errors="replace")
@@ -134,8 +136,11 @@ class SerialConsole:
                 return
             text = chunk.decode("utf-8", errors="replace")
             self.buffer += text
+            self.raw += text
             self._fh.write(text)
             self._fh.flush()
+            if len(self.raw) > 200_000:
+                self.raw = self.raw[-100_000:]
             if len(self.buffer) > 1_000_000:
                 # Boot logs can be long; keep enough tail for diagnosis.
                 self.buffer = self.buffer[-500_000:]
@@ -148,6 +153,15 @@ class SerialConsole:
 
     def sendline(self, line: str = "") -> None:
         self.send(line + "\r")
+
+    def raw_tail(self, size: int = 300) -> str:
+        """End of the serial stream, control characters and all.
+
+        ``expect()`` strips ANSI and consumes what it matched, so by the time a
+        prompt fails the whitespace that caused it is gone from ``buffer``. This
+        is the unedited record of what the guest wrote.
+        """
+        return self.raw[-size:]
 
     def expect(self, pattern: str, timeout: float, label: str) -> tuple[str, re.Match[str]]:
         """Wait for a pattern and return (output-before-match, match).
@@ -210,18 +224,25 @@ class SerialConsole:
         """
         self.log("opening a root shell with sudo -i")
         self.sendline("sudo -i")
-        # sudo prints "[sudo] password for user: ", not a bare "password:".
-        prompt = r"[Pp]assword[^\r\n:]*: |root@[^\s:]+:[^\r\n]*# "
-        _, match = self.expect(prompt, timeout, "root shell")
-        for attempt in range(1, 4):
-            if "root@" in match.group(0):
-                break
-            time.sleep(2 * attempt)
-            self.log(f"typing the password for sudo (attempt {attempt})")
-            self.sendline(password)
-            _, match = self.expect(prompt, 60, "root shell")
-        if "root@" not in match.group(0):
-            raise Failure(f"sudo -i never gave a root shell (last output {match.group(0)!r})")
+        # sudo prints "[sudo] password for user: ", not a bare "password:", and
+        # the trailing space is not guaranteed to arrive with the prompt, so any
+        # whitespace after the colon counts.
+        prompt = r"[Pp]assword[^\r\n:]*:\s|root@[^\s:]+:[^\r\n]*# "
+        try:
+            _, match = self.expect(prompt, timeout, "root shell")
+            for attempt in range(1, 4):
+                if "root@" in match.group(0):
+                    break
+                time.sleep(2 * attempt)
+                self.log(f"typing the password for sudo (attempt {attempt})")
+                self.sendline(password)
+                _, match = self.expect(prompt, 60, "root shell")
+            if "root@" not in match.group(0):
+                raise Failure(f"sudo -i never gave a root shell (last output {match.group(0)!r})")
+        except Failure as exc:
+            # expect() prints a trimmed tail; the whitespace sudo actually wrote is
+            # what tells you why a prompt failed to match.
+            raise Failure(f"{exc}\nraw serial bytes: {self.raw_tail()!r}") from exc
         uid = self.command("id -u", timeout=30)
         if uid.strip() != "0":
             raise Failure(f"sudo -i did not give a root shell (id -u = {uid!r})")
@@ -438,7 +459,6 @@ class InstallerTest:
         self.vnc = VNC(self.vnc_server, self.work, self.log)
         self.disk = self.work / "disk.qcow2"
         self.install_serial = self.work / "install-serial.log"
-        self.reboot_serial = self.work / "installed-serial.log"
         self.qemu: subprocess.Popen | None = None
         self.serial: SerialConsole | None = None
         self.timeout = args.timeout
@@ -447,6 +467,9 @@ class InstallerTest:
         self.reboot_timeout = args.reboot_timeout
         self.password = args.password
         self.branded = args.branded
+        self.desktop = args.desktop
+        self.desktop_session = args.desktop_session
+        self.session_env: dict[str, str] = {}
         self.root_ready = False
         self.log_copied = False
         if not 1 <= self.vnc_display <= 99:
@@ -519,8 +542,8 @@ class InstallerTest:
         )
         self.serial = SerialConsole(self.install_serial, self.log, path=serial_sock)
 
-    def start_reboot_vm(self) -> None:
-        serial_sock = self.work / "serial-installed.sock"
+    def start_reboot_vm(self, name: str = "installed") -> None:
+        serial_sock = self.work / f"serial-{name}.sock"
         self._start_vm(
             [
                 "-drive",
@@ -533,9 +556,9 @@ class InstallerTest:
                 "none",
             ],
             serial_sock,
-            self.work / "qemu-installed.log",
+            self.work / f"qemu-{name}.log",
         )
-        self.serial = SerialConsole(self.reboot_serial, self.log, path=serial_sock)
+        self.serial = SerialConsole(self.work / f"{name}-serial.log", self.log, path=serial_sock)
 
     def stop_vm(self) -> None:
         if self.serial:
@@ -1020,12 +1043,7 @@ class InstallerTest:
     def finish_install(self) -> None:
         # Power off from the serial shell rather than clicking the restart
         # checkbox. All install jobs have completed by the finished page.
-        assert self.serial
-        self.serial.command("sync", timeout=120, check=False)
-        # No marker: poweroff tears the shell down before it could be printed.
-        self.serial.sendline("poweroff -f")
-        self.wait_for_guest_exit()
-        self.stop_vm()
+        self.shutdown_guest()
 
     # -- post-install verification ------------------------------------
 
@@ -1104,10 +1122,172 @@ class InstallerTest:
             self.log("Samurai branding verification passed")
 
         self.log("installed system verification passed")
-        self.serial.command("sync", timeout=60, check=False)
+
+    # -- desktop (Plasma session) verification --------------------------
+
+    def shutdown_guest(self) -> None:
+        assert self.serial
+        self.serial.command("sync", timeout=120, check=False)
+        # No marker: poweroff tears the shell down before it could be printed.
         self.serial.sendline("poweroff -f")
         self.wait_for_guest_exit()
         self.stop_vm()
+
+    def enable_desktop_autologin(self) -> None:
+        """Log samurai straight into Plasma, on the test disk only.
+
+        The shipped image must keep asking for a password; this drop-in exists so
+        the harness can inspect a running compositor without clicking through
+        SDDM over VNC.
+        """
+        assert self.serial
+        listing = self.serial.command(
+            "for d in /usr/share/xsessions /usr/share/wayland-sessions; do "
+            'for f in "$d"/*.desktop; do [ -e "$f" ] && echo "$f"; done; done 2>/dev/null || true',
+            check=False,
+        )
+        self.log("available sessions:\n" + listing)
+        session = self.desktop_session
+        if not session:
+            files = [line.strip() for line in listing.splitlines() if line.strip().endswith(".desktop")]
+            if not files:
+                raise Failure("the installed system has no display manager session files")
+            # Prefer X11: MangoHUD is documented to be unreliable on Wayland.
+            x11 = [f for f in files if "/xsessions/" in f]
+            session = Path(x11[0] if x11 else files[0]).name
+        self.serial.command("mkdir -p /etc/sddm.conf.d", timeout=30)
+        self.serial.write_file(
+            "/etc/sddm.conf.d/99-install-test-autologin.conf",
+            f"[Autologin]\nUser=samurai\nSession={session}\n",
+        )
+        self.log(f"enabled test-only SDDM autologin into {session!r}")
+
+    def session_command(self, command: str, timeout: float = 180) -> str:
+        """Run a command as samurai inside the desktop session.
+
+        The serial shell has no session bus, and Plasma's own tools cannot reach
+        KWin without it, so the environment is copied from plasmashell itself.
+        """
+        assert self.serial
+        env = " ".join(f"{k}={shlex.quote(v)}" for k, v in self.session_env.items())
+        return self.serial.command(
+            f"sudo -u samurai env HOME=/home/samurai {env} bash -lc {shlex.quote(command)}",
+            timeout=timeout,
+            check=False,
+        )
+
+    @staticmethod
+    def _distinct_colors(path: Path, size: tuple[int, int] = (80, 50)) -> int:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            sample = image.convert("RGB").resize(size)
+            return len({tuple(px) for px in sample.getdata()})
+
+    def verify_desktop(self) -> None:
+        self.start_reboot_vm("desktop")
+        assert self.serial
+
+        pid = ""
+        report: list[str] = []
+        try:
+            self.serial.login("samurai", self.password, timeout=self.reboot_timeout)
+            self.serial.root_shell(self.password, timeout=180)
+
+            found = self.serial.command(
+                "pid=; for i in $(seq 1 150); do pid=$(pgrep -u samurai -f plasmashell | head -1); "
+                '[ -n "$pid" ] && break; sleep 2; done; echo "pid=${pid:-none}"',
+                timeout=340,
+                check=False,
+            )
+            match = re.search(r"pid=(\d+)", found)
+            if not match:
+                journal = self.serial.command(
+                    "journalctl -b -u sddm --no-pager 2>/dev/null | tail -n 60 || true",
+                    check=False,
+                )
+                raise Failure(
+                    "plasmashell never started, so the desktop cannot be verified; "
+                    f"sddm journal tail:\n{journal}"
+                )
+            pid = match.group(1)
+
+            env_text = self.serial.command(
+                f"tr '\\0' '\\n' < /proc/{pid}/environ | grep -E "
+                "'^(DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|DISPLAY|WAYLAND_DISPLAY"
+                "|XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP)=' || true",
+                check=False,
+            )
+            for line in env_text.splitlines():
+                key, sep, value = line.partition("=")
+                if sep and key:
+                    self.session_env[key] = value
+            self.log(f"desktop session environment: {self.session_env}")
+            if not (self.session_env.get("DISPLAY") or self.session_env.get("WAYLAND_DISPLAY")):
+                raise Failure(f"the session exposes no display: {env_text!r}")
+
+            def record(label: str, output: str) -> None:
+                report.append(f"### {label}\n{output}\n")
+                self.log(f"{label}: {output[:1500]}")
+
+            record("color schemes known to Plasma", self.session_command(
+                "plasma-apply-colorscheme --list-schemes 2>&1 || true"))
+            record("gamemode daemon", self.session_command(
+                "systemctl --user status gamemoded --no-pager 2>&1 | head -n 8 || true"))
+
+            applied = self.session_command("samurai-theme set shiro 2>&1")
+            record("samurai-theme set shiro", applied)
+            if "Applied Samurai shiro color scheme" not in applied:
+                raise Failure(
+                    "samurai-theme could not apply a color scheme to a live Plasma session:\n"
+                    + applied
+                )
+            if "Applied wallpaper shiro.jpg" not in applied:
+                raise Failure("samurai-theme did not apply the Shiro wallpaper:\n" + applied)
+
+            config = self.session_command(
+                "for g in KDE General; do printf '%s=' \"$g\"; kreadconfig6 --file kdeglobals "
+                '--group "$g" --key ColorScheme 2>/dev/null; echo; done'
+            )
+            record("kdeglobals ColorScheme", config)
+            if "samurai-shiro" not in config:
+                raise Failure(f"Plasma did not record the shiro scheme in kdeglobals: {config!r}")
+
+            gaming = self.session_command("samurai-gaming status 2>&1")
+            record("samurai-gaming status", gaming)
+            for tool in ("mangohud", "gamemoderun"):
+                if f"{tool}: installed" not in gaming:
+                    raise Failure(f"{tool} is not usable on the installed system:\n{gaming}")
+
+            libraries = self.serial.command(
+                "dpkg -L mangohud 2>/dev/null | grep -E '\\.so$' | head -n 5 || true",
+                check=False,
+            )
+            record("mangohud interposer libraries", libraries)
+            if ".so" not in libraries:
+                raise Failure("the mangohud package ships no interposer library")
+
+            # Recorded, not gated: an overlay needs a real GL/Vulkan app and a
+            # GPU, neither of which QEMU's software renderer provides.
+            record("mangohud preload smoke", self.session_command(
+                "MANGOHUD=1 mangohud /bin/true 2>&1; echo rc=$?", timeout=120))
+
+            self.vnc.wake()
+            shot = self.vnc.stable_capture("09-desktop.png")
+            colors = self._distinct_colors(shot)
+            record("desktop screenshot", f"{shot.name}: {colors} distinct colors sampled")
+            if colors < 12:
+                raise Failure(
+                    f"the desktop capture is blank ({colors} distinct colors); "
+                    "the compositor is not rendering"
+                )
+        finally:
+            (self.work / f"installed-desktop-{pid or 'early'}.txt").write_text(
+                "\n".join(report), encoding="utf-8"
+            )
+
+        self.log("desktop verification passed")
+        self.shutdown_guest()
 
     # -- orchestration -------------------------------------------------
 
@@ -1136,10 +1316,21 @@ class InstallerTest:
         self.verify_boot_loader()
         self.finish_install()
         self.verify_installed_system()
+        if self.desktop:
+            # The root shell from the verification step is still open.
+            self.enable_desktop_autologin()
+            self.shutdown_guest()
+            self.verify_desktop()
+        else:
+            self.shutdown_guest()
         self.log("install test passed")
 
 
-def _fake_shell(sock: socket.socket) -> None:
+def _fake_shell(
+    sock: socket.socket,
+    sudo_prompt: bytes = b"[sudo] password for samurai: ",
+    sudo_password: str | None = None,
+) -> None:
     """A tiny tty for the self-test: echoes input and answers markers."""
     pending = b""
     sudo = {"asking": False, "tries": 0}
@@ -1160,12 +1351,14 @@ def _fake_shell(sock: socket.socket) -> None:
                 # (sudo flushes queued tty input with TCSAFLUSH).
                 sudo["asking"] = True
                 sudo["tries"] = 0
-                sock.sendall(b"[sudo] password for samurai: ")
+                sock.sendall(sudo_prompt)
                 continue
             if sudo["asking"]:
                 sudo["tries"] += 1
-                if sudo["tries"] == 1:
-                    sock.sendall(b"\r\n[sudo] password for samurai: ")
+                if sudo["tries"] == 1 and sudo_password is None:
+                    sock.sendall(b"\r\n" + sudo_prompt)
+                elif sudo_password is not None and text != sudo_password:
+                    sock.sendall(b"\r\nSorry, try again.\r\n" + sudo_prompt)
                 else:
                     sudo["asking"] = False
                     sock.sendall(b"\r\nroot@samurai:~# ")
@@ -1195,7 +1388,6 @@ def self_test() -> int:
     thread = threading.Thread(target=_fake_shell, args=(guest,), daemon=True)
     thread.start()
     failures = 0
-    import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
         log = Log(Path(tmp) / "self-test.log")
@@ -1230,12 +1422,43 @@ def self_test() -> int:
             if console.command("id -u") != "0":
                 print("FAIL: root_shell() did not reach the fake root shell", file=sys.stderr)
                 failures += 1
-            if failures == 0:
-                print("install-test self-test passed")
         finally:
             console.close()
             log.close()
     guest.close()
+
+    # A rejected or unmatched sudo password must fail loudly with the bytes the
+    # guest actually wrote, not hang and then report a trimmed tail.
+    host, guest = socket.socketpair()
+    thread = threading.Thread(
+        target=_fake_shell,
+        args=(guest,),
+        kwargs={"sudo_password": "not-the-password"},
+        daemon=True,
+    )
+    thread.start()
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Log(Path(tmp) / "self-test.log")
+        console = SerialConsole(Path(tmp) / "transcript.log", log, sock=host)
+        try:
+            console.root_shell("live", timeout=10)
+        except Failure as exc:
+            if "Sorry, try again" not in str(exc) or "raw serial bytes" not in str(exc):
+                print(
+                    f"FAIL: a rejected password did not report the serial bytes: {exc}",
+                    file=sys.stderr,
+                )
+                failures += 1
+        else:
+            print("FAIL: root_shell() accepted a password sudo rejected", file=sys.stderr)
+            failures += 1
+        finally:
+            console.close()
+            log.close()
+    guest.close()
+
+    if failures == 0:
+        print("install-test self-test passed")
     return 1 if failures else 0
 
 
@@ -1262,6 +1485,19 @@ def main() -> int:
         "--branded",
         action="store_true",
         help="require Samurai branding on the installed system",
+    )
+    parser.add_argument(
+        "--desktop",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="boot the installed system into Plasma and verify the desktop "
+        "(use --no-desktop to stop at the serial-console checks)",
+    )
+    parser.add_argument(
+        "--desktop-session",
+        default="",
+        help="SDDM session file to auto-login for the desktop check; empty picks "
+        "the first X11 session, else the first session found",
     )
     parser.add_argument(
         "--self-test",

@@ -19,6 +19,11 @@ on:
         required: false
         type: boolean
         default: false
+      desktop:
+        description: "Boot the installed system into Plasma and verify the desktop"
+        required: false
+        type: boolean
+        default: true
   workflow_call:
     inputs:
       run_id:
@@ -30,6 +35,11 @@ on:
         required: false
         type: boolean
         default: false
+      desktop:
+        description: "Boot the installed system into Plasma and verify the desktop"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -39,11 +49,12 @@ jobs:
   install:
     name: Install ISO to disk
     runs-on: ubuntu-latest
-    timeout-minutes: 190
+    timeout-minutes: 240
     env:
       CALL_RUN_ID: ${{ inputs.run_id }}
       DISPATCH_RUN_ID: ${{ github.event.inputs.run_id }}
       EXPECT_BRANDING: ${{ inputs.branded }}
+      EXPECT_DESKTOP: ${{ inputs.desktop }}
     steps:
       - name: Free disk space
         run: |
@@ -67,12 +78,26 @@ jobs:
           set -euo pipefail
           run_id="${CALL_RUN_ID:-${DISPATCH_RUN_ID:-}}"
           if [[ -z "$run_id" ]]; then
-            run_id=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/build-iso-hosted.yml/runs?status=success&per_page=1" \
-              --jq '.workflow_runs[0].id')
+            # Do not filter on status=success. The build job succeeds even when
+            # the chained install test fails, so a status filter keeps selecting
+            # an ISO from before every installer fix, and once that artifact
+            # expires the run has no ISO at all. Take the newest build that
+            # still has an unexpired ISO artifact.
+            for run in $(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/build-iso-hosted.yml/runs?per_page=15" \
+              --jq '.workflow_runs[] | select(.status == "completed") | .id'); do
+              found=$(gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${run}/artifacts?per_page=100" \
+                --jq '.artifacts[] | select(.name == "samurai-linux-iso" and .expired == false) | .id' \
+                | head -n 1)
+              if [[ -n "$found" ]]; then
+                run_id="$run"
+                break
+              fi
+            done
           fi
           [[ -n "$run_id" && "$run_id" != "null" ]] || {
-            echo "No successful Build ISO (hosted) run found" >&2
+            echo "No Build ISO (hosted) run with a live samurai-linux-iso artifact" >&2
             exit 1
           }
           echo "Using ISO artifact from run $run_id"
@@ -131,6 +156,9 @@ jobs:
           args=()
           if [[ "${EXPECT_BRANDING:-false}" == "true" ]]; then
             args+=(--branded)
+          fi
+          if [[ "${EXPECT_DESKTOP:-true}" == "false" ]]; then
+            args+=(--no-desktop)
           fi
           bash build/install-test.sh "$iso" "${args[@]}" --timeout 5400
 
