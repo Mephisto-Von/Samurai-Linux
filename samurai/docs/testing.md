@@ -48,8 +48,12 @@ update and recovery workflows the install test reads back.
   UEFI boot records exist, the live kernel/initramfs/squashfs are present, and
   Calamares, Samurai branding, the installer entry, GRUB packages, `unsquashfs`,
   `rsync`, and `cryptsetup` are inside the squashfs; the Samurai CLIs and KDE
-  color schemes are installed; and the live menu auto-boots after 5 seconds with
-  `console=ttyS0,115200n8` on the isolinux and GRUB entries
+  color schemes are installed; the live menu auto-boots after 5 seconds with
+  `console=ttyS0,115200n8` on the isolinux and GRUB entries; the Debian security
+  pocket is configured exactly once, not zero and not twice; and the squashfs
+  metadata records the policy files as `root:root` with the modes the security
+  hook sets — read from the metadata rather than an extraction, because
+  extracting as a non-root user rewrites ownership
 - Checksums and GPG signature verify:
   ```bash
   cd dist

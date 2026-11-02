@@ -11,7 +11,8 @@ it were missing or malformed, but no installed-system check reads it yet.
 | --- | --- | --- |
 | Non-root daily account, admin through `%sudo` | tested | the harness logs in as `samurai`, and `sudo -i` needs the user's password |
 | No passwordless sudo on an installed system | tested | `grep -rEl '^[^#]*NOPASSWD' /etc/sudoers /etc/sudoers.d/` must find nothing |
-| sudo behaviour (`env_reset`, 5-minute ticket, 3 tries) | implemented | `visudo -c` in `0120-security.hook.chroot`; file must be `0440 root` or the build fails |
+| sudo behaviour (`env_reset`, 5-minute ticket, 3 tries) | implemented | `visudo -c` in `0120-security.hook.chroot`, and the image has to record the drop-in as `0440 root/root` or the build fails; `install-test.py` requires the installed system to report the same mode, which no CI install has reached yet |
+| Shipped tools in `/usr/local/bin` are root-owned | implemented | `0120-security.hook.chroot` chowns the directory and every `samurai-*` tool to `root:root 0755`; `verify-iso.sh` reads owner and mode out of the squashfs metadata and fails on anything else |
 | Default-deny inbound firewall (IPv4 **and** IPv6) | tested | `systemctl is-enabled nftables` and `nft list table inet samurai` must show `chain ingress` with `policy drop` |
 | Mandatory access control (AppArmor) | partly tested | kernel parameter must be `Y` and at least one profile must be loaded; enforce/complain counts are recorded, not asserted |
 | Automatic security upgrades | tested | `APT::Periodic::Unattended-Upgrade` must be `"1"`, both apt timers must be `enabled`, the package `unattended-upgrades` must be installed, and the effective `Allowed-Origins` must name `Debian:trixie-security` |
@@ -86,6 +87,15 @@ installs it runs `visudo -c` on both the fragment and the merged policy, and
 `chmod 0440`, because sudo silently ignores a sudoers drop-in that is group- or
 world-writable — a policy file with the wrong mode is a policy that is not
 applied.
+
+The same reasoning covers the shipped CLIs. live-build copies `includes.chroot`
+with `cp -a`, so `/usr/local/bin` and the `samurai-*` tools arrive in the image
+owned by whoever ran the checkout — uid 1001 in a hosted build, which is no
+account inside the chroot at all. Writing into a directory follows its owner, not
+its group bits, so that uid could replace a tool that users run through sudo. The
+security hook chowns them to `root:root`, and `build/verify-iso.sh` checks the
+mode against the squashfs metadata rather than an extracted copy, because
+extracting as a non-root user rewrites ownership and would prove nothing.
 
 ## Mandatory access control
 
