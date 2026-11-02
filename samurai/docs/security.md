@@ -1,70 +1,130 @@
-# Samurai Security Model
+# Samurai Linux security status
 
-> **Status:** the live ISO uses Debian's default security configuration plus the
-> packages in `build/config/package-lists/`. Custom firewall rules, SSH
-> hardening, unattended-upgrades, and a signed APT repository are **not
-> implemented yet**. Items mentioning the installer describe the target design.
-> ISO signing is available through `build/build.sh` when `SAMURAI_SIGN_KEY` is set.
+The project requirements forbid claiming a control is enabled because its
+package is installed, so every row below says what the image actually configures
+and how that is proven. **Tested** means an automated check in
+`build/install-test.py` reads the state back from a system installed by the CI
+ISO; **implemented** means the configuration ships and the build would fail if
+it were missing or malformed, but no installed-system check reads it yet.
 
-## Secure Defaults
+| Control | Status | How it is proven |
+| --- | --- | --- |
+| Non-root daily account, admin through `%sudo` | tested | the harness logs in as `samurai`, and `sudo -i` needs the user's password |
+| No passwordless sudo on an installed system | tested | `grep -rEl '^[^#]*NOPASSWD' /etc/sudoers /etc/sudoers.d/` must find nothing |
+| sudo behaviour (`env_reset`, 5-minute ticket, 3 tries) | implemented | `visudo -c` in `0120-security.hook.chroot`; file must be `0440 root` or the build fails |
+| Default-deny inbound firewall (IPv4 **and** IPv6) | tested | `systemctl is-enabled nftables` and `nft list table inet samurai` must show `chain ingress` with `policy drop` |
+| Mandatory access control (AppArmor) | partly tested | kernel parameter must be `Y` and at least one profile must be loaded; enforce/complain counts are recorded, not asserted |
+| Automatic security upgrades | tested | `APT::Periodic::Unattended-Upgrade` must be `"1"`, both apt timers must be `enabled`, and `Allowed-Origins` must include a security origin |
+| Authenticated package sources | tested at build time | `0120-security.hook.chroot` aborts the build unless `apt-get update` authenticates a `trixie-security` archive; the installed system must still show it in `apt-cache policy` |
+| APT pinning that keeps security preferred | implemented | `99samurai` ships in the image; the installed system's `apt-cache policy` priorities are not yet asserted |
+| Persistent system journal | tested | `/var/log/journal` must exist after first boot, which only happens if `Storage=persistent` was read |
+| Release artifact integrity | tested | CI publishes `SHA256`, a GPG detached ASCII-armored signature, and the public key; the signature is verified with `gpg --verify` in the runner |
+| Full-disk (LUKS) encryption during install | **not verified** | Calamares ships Debian's partition module configuration, which the project does not modify; no Samurai test has completed an encrypted installation |
+| Secure Boot | **not supported** | no shim signing exists, so the ISO boots only with Secure Boot off or with a user-supplied MOK key |
+| Vulnerability intake and patch process | **incomplete** | private reporting is described below, but there is no security contact, advisory feed, or documented CVE pipeline yet |
+| Rollback / recovery after a failed update | **incomplete** | APT keeps no snapshot; see `known-limitations.md` |
 
-### System Access
-- **Root login disabled by default** - administrative tasks via sudo only
-- **Sudo group membership** - granted only to the administrator account
-- **Sudo timeout** - configurable, defaults to a short credentials cache
-- **SSH hardening** - root login disabled, password auth off by default when
-  keys are present, config documented in the installer
+## Network exposure
 
-### Firewall
-- **Default-deny inbound** - no listening services exposed without explicit rules
-- **nftables/UFW** - managed firewall with documented rule sets
-- **Outbound allowed** - with disclosure when AI features will transmit data
+`/etc/nftables.conf` implements the policy: drop unsolicited inbound, allow
+outbound, accept what the conntracker recognises as a reply to something we
+started, and keep the protocols a machine cannot configure itself without
+(DHCPv4, DHCPv6, IPv6 neighbour/router discovery, rate-limited ICMP echo).
+Dropped packets are logged at ten per minute with the prefix `samurai-drop: `.
 
-### Disk and Filesystem
-- **Full-disk encryption** - LUKS supported during installation
-- **Encrypted swap** - when LUKS full-disk encryption is enabled
-- **Recovery key** - optionally saved to user home with a warning
+The default is deliberately the *workstation* default: a developer machine
+listens on nothing until the developer starts something. Opening a port is an
+explicit act, done by dropping a file in `/etc/nftables.d/`:
 
-## Package and Repository Security
+```
+# /etc/nftables.d/10ssh.nft
+add rule inet samurai ingress_exceptions tcp dport 22 ct state new accept
+```
 
-### Signing
-- **APT repository signing** - planned; no Samurai APT repository is published yet
-- **ISO checksums** - SHA-256 published with every release
-- **ISO signature** - GPG-armored detached signature (`samurai-linux-<date>-amd64.iso.sig`)
+`forward` is dropped as well, so the machine never becomes a router or a bridge
+between networks without a rule saying so.
 
-### Updates
-- **Security upgrades** - unattended-upgrades configured for critical fixes
-- **Update testing** - upgrades validated on test systems before publication
-- **Rollback guidance** - documented downgrade/recovery procedures
+The exception chain is jumped to from the input hook rather than hung on a
+second, later hook: a `drop` verdict ends traversal of the hook chain, so an
+accept chain at a lower priority would never be consulted.
 
-## AI Security
+## Package sources and updates
 
-### Data Handling
-- **No silent uploads** - files, source code, logs, credentials, and system info
-  are never uploaded to cloud services without explicit user action
-- **Cloud disclosure** - clear indication when a request will leave the device
-  or incur charges
-- **Permissioned execution** - AI-proposed privileged actions (package installs,
-  sudo commands, disk/firewall changes, credential access) require explicit
-  user confirmation
+Samurai Linux installs no third-party APT repository. Every package comes from
+a Debian archive, fetched over HTTP and authenticated by the `InRelease`
+signature against `debian-archive-keyring` — Debian does not sign individual
+`.deb` files, so archive signature is the trust boundary.
 
-### Credential Storage
-- **OS credential store** - API keys stored via KWallet/SecretService
-- **CLI management**:
-  ```bash
-  samurai-ai credentials set <provider> <key>
-  samurai-ai credentials get <provider>
-  samurai-ai credentials remove <provider>
-  ```
-- **Local mode preferred** - privacy-sensitive work stays on-device
+`/etc/apt/preferences.d/99samurai` pins `trixie-security` above the release and
+holds `trixie-backports` and `trixie-proposed-updates` at priority 1, where they
+can only be pulled in deliberately with `apt install -t`.
+
+Security updates apply themselves: `APT::Periodic::Update-Package-Lists`,
+`Download-Upgradeable-Packages` and `Unattended-Upgrade` are all `1`, driven by
+the `apt-daily` and `apt-daily-upgrade` timers that the image enables, and
+`unattended-upgrades` is installed to do the work. Which archives may be
+upgraded without asking remains Debian's decision in
+`50unattended-upgrades`; `20samurai-security` only changes the behaviour that
+defaults assume a server: never reboot automatically, and drop dependencies an
+upgrade orphaned.
+
+## Access control
+
+The `samurai` account created by the installer is a normal user in `%sudo`.
+`/etc/sudoers.d/90samurai` resets the environment, times a cached ticket out
+after five minutes, and stops after three wrong passwords. The hook that
+installs it runs `visudo -c` on both the fragment and the merged policy, and
+`chmod 0440`, because sudo silently ignores a sudoers drop-in that is group- or
+world-writable — a policy file with the wrong mode is a policy that is not
+applied.
+
+## Mandatory access control
+
+AppArmor is enabled at boot and its profiles load from the read-only image.
+Debian ships profiles in a mix of enforce and complain modes, so the automated
+test asserts only what it can prove: that the kernel has AppArmor on and that
+profiles were loaded. The enforce/complain counts are recorded in the install
+test report so that a claim about coverage can be checked against a number
+rather than assumed.
+
+## Logging
+
+`/etc/systemd/journald.conf.d/99samurai.conf` sets `Storage=persistent`, so the
+firewall's dropped-packet records, failed sudo attempts and service errors
+survive a reboot instead of dying with `/run/log`.
+
+## Release artifact integrity
+
+`build/build.sh` writes a `.sha256` and, when `SAMURAI_SIGN_KEY` is set, a
+GPG-armored detached signature for the ISO; the hosted CI workflow signs with
+the project release key and publishes the public key alongside the artifacts.
+Verify a download with:
+
+```
+sha256sum -c samurai-linux-<version>-amd64.iso.sha256
+gpg --import samurai-release-key.asc
+gpg --verify samurai-linux-<version>-amd64.iso.sig
+```
+
+## AI feature credentials
+
+`samurai-ai` stores provider keys through the Secret Service (`secret-tool`,
+backed by KWallet) and says so in `samurai-ai status`. When no Secret Service is
+running it falls back to a `0600` file under `~/.config/samurai-ai/` and labels
+that fallback `NOT encrypted` rather than pretending it is a wallet. No AI
+request leaves the machine without an explicit user action, and privileged
+actions a model proposes require confirmation first.
 
 ## Secure Boot
-- **Unsigned ISO** - current builds do not ship a Secure Boot signature
-- **Documentation** - users may sign the bootloader with their own MOK key
-- **Planned**: project-signed builds in a future release
 
-## Reporting Security Issues
-- Report suspected vulnerabilities privately to the maintainers before public
-  disclosure
-- Critical defects block release until resolved or explicitly waived
-  (see `release-process.md`)
+Not implemented. Signing a shim requires a trusted CA key, a source of that
+signature, and hardware or firmware enrolment to test against; none of that
+exists here. Users who need it can enrol their own MOK key, which is a
+per-machine decision the project cannot verify for them.
+
+## Reporting issues
+
+Report suspected vulnerabilities to the maintainers privately before public
+disclosure. Critical defects block a release until they are fixed or explicitly
+waived in writing (see `release-process.md`). A security contact address and an
+advisory process are outstanding (§5 checklist above).

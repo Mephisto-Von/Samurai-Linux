@@ -1080,6 +1080,30 @@ class InstallerTest:
             ("dpkg-query -W -f='${Status}\\n' live-boot 2>/dev/null || true", "live-boot status"),
             ("systemctl is-system-running 2>/dev/null || true", "system state"),
             ("systemctl --failed --no-legend 2>/dev/null | head -n 10 || true", "failed units"),
+            # Security controls are read as configured state, not as installed
+            # packages: the project requirements forbid claiming a control is on
+            # because its package was pulled in.
+            (
+                "systemctl is-enabled nftables.service apparmor.service "
+                "apt-daily.timer apt-daily-upgrade.timer 2>&1",
+                "security units",
+            ),
+            ("nft list table inet samurai 2>&1 | head -n 40", "packet filter"),
+            ("cat /sys/module/apparmor/parameters/enabled 2>&1", "apparmor parameter"),
+            (
+                "printf 'profiles=%s complain=%s\\n' \"$(wc -l < /sys/kernel/security/apparmor/profiles 2>/dev/null || echo 0)\" "
+                "\"$(grep -c '(complain)' /sys/kernel/security/apparmor/profiles 2>/dev/null || echo 0)\"",
+                "apparmor profiles",
+            ),
+            ("apt-config dump APT::Periodic::Unattended-Upgrade 2>&1", "unattended upgrades"),
+            ("apt-config dump Unattended-Upgrade::Allowed-Origins 2>&1", "upgrade origins"),
+            ("apt-cache policy 2>&1 | grep -c 'n=trixie-security'", "security archive"),
+            ("ls /var/log/journal 2>&1 | head -n 3", "journal storage"),
+            ("stat -c '%a %U' /etc/sudoers.d/90samurai /etc/nftables.conf 2>&1", "policy file modes"),
+            (
+                "grep -rEl '^[^#]*NOPASSWD' /etc/sudoers /etc/sudoers.d/ 2>&1 || echo none",
+                "passwordless sudoers",
+            ),
             ("lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT", "block devices"),
         ]
         report = []
@@ -1128,7 +1152,71 @@ class InstallerTest:
                 raise Failure("the installed GRUB menu does not mention Samurai Linux")
             self.log("Samurai branding verification passed")
 
+        self.verify_security_defaults(values)
+
         self.log("installed system verification passed")
+
+    def verify_security_defaults(self, values: dict[str, str]) -> None:
+        """Check the security controls as configured state on the installed system.
+
+        0120-security.hook.chroot writes these files into the image, and a file
+        that a service never loads would look identical in the repository, so
+        every control is read back from systemd, nft, the kernel and apt.
+        """
+        unit_names = ["nftables.service", "apparmor.service", "apt-daily.timer", "apt-daily-upgrade.timer"]
+        states = [line.strip() for line in values.get("security units", "").splitlines() if line.strip()]
+        if len(states) != len(unit_names):
+            raise Failure(f"expected {len(unit_names)} unit states, read {states!r}")
+        inactive = [f"{name}={state}" for name, state in zip(unit_names, states) if state != "enabled"]
+        if inactive:
+            raise Failure(f"security units are not enabled on the installed system: {', '.join(inactive)}")
+        self.log("nftables, apparmor and the apt periodic timers are all enabled")
+
+        ruleset = values.get("packet filter", "")
+        if "chain ingress" not in ruleset or "policy drop" not in ruleset:
+            raise Failure(f"the default-deny input policy is not in the running ruleset:\n{ruleset}")
+        self.log("the running ruleset denies unsolicited inbound traffic")
+
+        if values.get("apparmor parameter", "").strip() != "Y":
+            raise Failure(f"the kernel has AppArmor disabled: {values.get('apparmor parameter')!r}")
+        profiles = values.get("apparmor profiles", "")
+        if not profiles.startswith("profiles=") or profiles.split()[0].split("=")[1] == "0":
+            raise Failure(f"AppArmor is enabled but loaded no profiles: {profiles!r}")
+        # Reported, not asserted: Debian ships some profiles in complain mode and
+        # claiming enforcing coverage we do not have is the mistake to avoid.
+        self.log(f"apparmor profiles: {profiles}")
+
+        if '"1"' not in values.get("unattended upgrades", ""):
+            raise Failure(
+                "automatic security upgrades are switched off in the installed system: "
+                f"{values.get('unattended upgrades')!r}"
+            )
+        # The switch above is worthless if no archive is allowed to upgrade, and
+        # Debian's default list is what decides that, so read the effective value.
+        origins = values.get("upgrade origins", "")
+        if "security" not in origins:
+            raise Failure(f"unattended upgrades are enabled for no security archive: {origins!r}")
+        if not values.get("security archive", "").strip().isdigit() or values.get("security archive", "0") == "0":
+            raise Failure("the installed system cannot reach the Debian security archive to update from")
+        self.log("unattended security upgrades are enabled for a security origin")
+
+        # journald only keeps a journal on disk once it has created its
+        # machine-id directory, so the directory is the proof Storage=persistent
+        # was read rather than shipped and ignored.
+        journal = values.get("journal storage", "")
+        if "No such file or directory" in journal or not journal.strip():
+            raise Failure(f"the installed system keeps no persistent journal: {journal!r}")
+        self.log("journald is writing a persistent journal")
+
+        modes = [line.strip() for line in values.get("policy file modes", "").splitlines() if line.strip()]
+        if modes != ["440 root", "644 root"]:
+            raise Failure(f"security policy files have the wrong ownership or mode: {modes!r}")
+        if values.get("passwordless sudoers", "").strip() != "none":
+            raise Failure(
+                "the installed system grants sudo without a password: "
+                f"{values.get('passwordless sudoers')!r}"
+            )
+        self.log("sudo and nftables policy files are root-owned and not group-writable")
 
     # -- desktop (Plasma session) verification --------------------------
 
@@ -1253,6 +1341,16 @@ class InstallerTest:
                 "plasma-apply-colorscheme --list-schemes 2>&1 || true"))
             record("gamemode daemon", self.session_command(
                 "systemctl --user status gamemoded --no-pager 2>&1 | head -n 8 || true"))
+
+            # A desktop with no GL/EGL provider cannot composite, and that is what
+            # really broke run 17: the image shipped Qt but no Mesa driver, so KWin
+            # logged "egl: failed to create dri2 screen". Gated because every theme
+            # check below depends on a working renderer.
+            glx = self.session_command("glxinfo -B 2>&1 | head -n 20 || true")
+            record("glxinfo -B", glx)
+            record("eglinfo", self.session_command("eglinfo 2>&1 | head -n 25 || true"))
+            if "OpenGL renderer string" not in glx:
+                raise Failure(f"the session has no OpenGL renderer, so the image has no Mesa DRI driver:\n{glx}")
 
             applied = self.session_command("samurai-theme set shiro 2>&1")
             record("samurai-theme set shiro", applied)

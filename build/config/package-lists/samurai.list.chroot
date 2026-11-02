@@ -68,6 +68,7 @@ ca-certificates
 curl
 wget
 git
+openssh-client
 sudo
 vim
 python3
@@ -78,6 +79,18 @@ ninja-build
 nftables
 apparmor
 apparmor-profiles
+unattended-upgrades
+
+# OpenGL / Vulkan providers. kde-standard pulls Qt and Plasma but no DRI driver,
+# and without one KWin cannot create a context ("egl: failed to create dri2
+# screen") - the cost of that omission was a desktop phase that never started.
+libgl1
+libgl1-mesa-dri
+libglx-mesa0
+libegl1
+libegl-mesa0
+mesa-utils
+mesa-vulkan-drivers
 
 # Gaming runtime (Steam is installed after first boot with samurai-gaming)
 gamemode

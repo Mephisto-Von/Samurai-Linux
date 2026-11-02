@@ -1,0 +1,25 @@
+// Samurai Linux automatic security update behaviour.
+//
+// Which archives may be upgraded without asking is Debian's own decision in
+// /etc/apt/apt.conf.d/50unattended-upgrades; this file does not fight it. What
+// it fixes is how the upgrade behaves, because the defaults are aimed at
+// servers:
+//
+//   Automatic-Reboot false - a workstation must not reboot out from under an
+//   unwritten file. Patched services are restarted, the machine is not.
+//   Remove-Unused-Dependencies true - orphaned libraries would otherwise
+//   accumulate on every kernel and library upgrade.
+//   Periodic intervals - these are the switch the apt-daily timers read; with
+//   them unset the timers fire and do nothing, which is the classic way to
+//   install unattended-upgrades and still never receive a patch.
+//
+// install-test.py asserts these values, plus the effective Allowed-Origins, on
+// an installed system rather than trusting that the package was pulled in.
+
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";

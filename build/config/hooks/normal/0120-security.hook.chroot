@@ -1,0 +1,73 @@
+#!/bin/sh
+# Apply the Samurai Linux security defaults inside the chroot.
+#
+# Three things happen here that includes.chroot alone cannot do:
+#
+#   1. fix the ownership and modes git cannot carry (sudo and nft both refuse to
+#      read a file that is group- or world-writable, or not root-owned, and fail
+#      *silently* - the policy would be present and dead);
+#   2. prove the Debian security pocket is really in the installed system's
+#      source list, because every automatic-update claim below depends on it;
+#   3. enable the units those files drive, since a configured service that is
+#      not started is exactly the "enabled because installed" mistake the
+#      project requirements forbid.
+#
+# install-test.py re-checks each of these on the installed system.
+set -eu
+
+fail() {
+	echo "security hook: $*" >&2
+	exit 1
+}
+
+# --- permissions the git index cannot express -------------------------------
+
+for file in /etc/nftables.conf /etc/apt/preferences.d/99samurai \
+	/etc/apt/apt.conf.d/20samurai-security \
+	/etc/systemd/journald.conf.d/99samurai.conf; do
+	[ -f "$file" ] || fail "$file is missing from includes.chroot"
+	chown root:root "$file"
+	chmod 0644 "$file"
+done
+
+sudoers=/etc/sudoers.d/90samurai
+[ -f "$sudoers" ] || fail "$sudoers is missing from includes.chroot"
+chown root:root "$sudoers"
+chmod 0440 "$sudoers"
+command -v visudo >/dev/null 2>&1 || fail "visudo is not in the image to validate sudoers"
+visudo -c -f "$sudoers" >/dev/null 2>&1 || fail "$sudoers is not valid sudoers syntax"
+visudo -c >/dev/null 2>&1 || fail "the merged sudoers configuration does not validate"
+
+# Exception directory for the firewall. Empty by design; see nftables.conf.
+mkdir -p -m 0755 /etc/nftables.d
+chown root:root /etc/nftables.d
+
+# --- a signed security archive that is actually configured ------------------
+
+# live-build writes the image's sources.list from the mirrors it fetched, and
+# whether the security pocket survived depends on its defaults. Do not assume:
+# authenticate what is configured first, and only add the pocket if it is
+# genuinely missing, so a configured archive is never duplicated.
+# Only main is requested: the security archive's non-free components are not
+# consistently published, and a 404 there would break every future update.
+apt-get update -o APT::Acquire::Retries=3 \
+	|| fail "apt could not update from the configured archives (an unsigned or unreachable one is fatal here)"
+if ! apt-cache policy | grep -q 'n=trixie-security'; then
+	printf 'deb http://deb.debian.org/debian-security trixie-security main\n' \
+		> /etc/apt/sources.list.d/samurai-security.list
+	chown root:root /etc/apt/sources.list.d/samurai-security.list
+	chmod 0644 /etc/apt/sources.list.d/samurai-security.list
+	apt-get update -o APT::Acquire::Retries=3 \
+		|| fail "the Debian security archive was added but could not be authenticated"
+fi
+apt-cache policy | grep -q 'n=trixie-security' \
+	|| fail "the installed system would have no Debian security archive to update from"
+
+# --- the units that make the configuration live -----------------------------
+
+for unit in nftables.service apparmor.service apt-daily.timer apt-daily-upgrade.timer; do
+	systemctl enable --no-reload "$unit" >/dev/null 2>&1 \
+		|| fail "$unit could not be enabled (is the package that ships it installed?)"
+	state=$(systemctl is-enabled "$unit" 2>&1) || true
+	[ "$state" = enabled ] || fail "$unit is $state, expected enabled"
+done

@@ -15,6 +15,7 @@ build/config/hooks/normal/*
 !build/config/hooks/normal/0100-samurai.hook.chroot
 !build/config/hooks/normal/0100-serial.hook.binary
 !build/config/hooks/normal/0110-branding.hook.chroot
+!build/config/hooks/normal/0120-security.hook.chroot
 !build/config/hooks/normal/0200-branding.hook.binary
 build/config/package-lists/live.list.chroot
 build/config/includes.chroot/usr/local/bin/

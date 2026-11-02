@@ -1,0 +1,39 @@
+# Samurai Linux APT pinning.
+#
+# Every archive Samurai Linux installs from is one of Debian's, fetched over
+# http and authenticated by Release-file signature against
+# /usr/share/keyrings/debian-archive-keyring.gpg; no third-party repository is
+# configured. .deb files are not GPG-checked individually - Debian does not sign
+# them - which is why 0120-security.hook.chroot insists the security pocket is
+# present and verifiable at build time.
+#
+# Pinning decides which of them wins when the same package exists in more than
+# one, so a mirror lagging behind the security archive can never leave a patched
+# package unupgraded, and no test or debug pocket of the archive can be pulled in
+# by accident.
+#
+# Priority semantics (apt_preferences(5)):
+#   600 - security: always preferred, may step a package down to a patched
+#         older version rather than leave a CVE unserved
+#   500 - the normal release and its update pocket
+#     1 - everything else in Debian, installable only with an explicit -t
+
+Package: *
+Pin: release n=trixie-security
+Pin-Priority: 600
+
+Package: *
+Pin: release n=trixie
+Pin-Priority: 500
+
+Package: *
+Pin: release n=trixie-updates
+Pin-Priority: 500
+
+Package: *
+Pin: release n=trixie-backports
+Pin-Priority: 1
+
+Package: *
+Pin: release n=trixie-proposed-updates
+Pin-Priority: 1

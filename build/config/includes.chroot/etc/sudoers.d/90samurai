@@ -1,0 +1,18 @@
+# Samurai Linux sudo administration policy.
+#
+# Day-to-day work runs as an unprivileged user, and privilege is granted by the
+# %sudo group that the installer creates - never by a shared root password, and
+# never without one. install-test.py fails a release if any sudoers fragment on
+# an installed system grants password-free root, so a live-session convenience
+# rule could not quietly ride along into the copy on disk.
+#
+# These defaults tighten how the grant behaves:
+#   env_reset            - the caller's environment cannot smuggle in PATH,
+#                          LD_PRELOAD or locale tricks
+#   timestamp_timeout=5  - a cached ticket expires before an unattended terminal
+#                          becomes an open door
+#   passwd_tries / timeout - a guessed password cannot be tried indefinitely
+Defaults	env_reset
+Defaults	timestamp_timeout=5
+Defaults	passwd_tries=3
+Defaults	passwd_timeout=60
