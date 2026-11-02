@@ -186,15 +186,22 @@ the same name, so keep an offline backup of `.tools/samurai-signing-key.asc`,
 No install-test run has been green end to end yet, so there is no tag and no
 published release. Each dispatch has reached further than the previous one - the
 failures have moved from the live session, to partitioning, to the bootloader, to
-the sudo prompt on the installed system, and the last two stopped before the
+the sudo prompt on the installed system, and the last few stopped before the
 installer even ran: `build/verify-iso.sh` refused to publish an image whose
 shipped APT sources configured no Debian security archive, which would have
-made every automatic-update claim inert. Runs 41447034423 and 41452920694 caught
-that. The pocket now ships as
+made every automatic-update claim inert (runs 41447034423 and 41452920694). The
+pocket now ships as
 `build/config/includes.chroot/etc/apt/sources.list.d/samurai-security.list`
 rather than being requested from live-build, whose own `sources.list` is rewritten
-around the squashfs packing - see `build/auto/config`. The suite also reads
-back the installed security state, exercises `samurai-profile` and
+around the squashfs packing - see `build/auto/config`, and run 41514577159 proved
+the image really carries it. That same run then failed inside the new permission
+check, not in the image: it asked `unsquashfs` for a `-lm` listing, which is not
+an option it knows, and `unsquashfs` reports an unknown option by printing its
+usage to stdout and exiting 1 - so the check died with nothing on stderr. It lists
+with `-ll -dest .` now, the sudoers expectation matches the 0440 the security hook
+sets, and `/usr/local/bin` and its tools are chowned to root, because live-build
+copies them with the owner of the checkout (uid 1001 in a hosted build). The suite
+also reads back the installed security state, exercises `samurai-profile` and
 `samurai-recovery` on the installed system, and runs
 `build/measure-performance.sh` inside a live Plasma session when `--desktop` is
 used. Manual verification on real hardware, including a Secure Boot machine and
