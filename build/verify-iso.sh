@@ -271,10 +271,13 @@ assert_contains etc/systemd/journald.conf.d/99samurai.conf '^Storage=persistent$
 assert_contains usr/local/bin/samurai-profile '^profile_packages\(\) \{$'
 assert_contains usr/local/bin/samurai-recovery '^cmd_snapshot\(\) \{$'
 
-# Unattended upgrades are only real if an archive exists to upgrade from, and
-# 0120-security.hook.chroot is supposed to have guaranteed that at build time.
-# Checked per file, because /etc/apt as a whole would also match the pin in
-# preferences.d, which proves nothing about a configured source.
+# Unattended upgrades are only real if an archive exists to upgrade from. The
+# shipped source list is written by live-build from --mirror-binary-security and
+# is gated on --security in build/auto/config, so this is the only place that
+# can prove it survived: the chroot hooks run before the build-time sources are
+# replaced with the final ones. Checked per file, because /etc/apt as a whole
+# would also match the pin in preferences.d, which proves nothing about a
+# configured source.
 unsquashfs -f -no-progress -d "$ROOT" etc/apt/sources.list >/dev/null 2>&1 || true
 unsquashfs -f -no-progress -d "$ROOT" etc/apt/sources.list.d >/dev/null 2>&1 || true
 sources_found=0

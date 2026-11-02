@@ -348,9 +348,13 @@ assert_contains "$out" "--architecture amd64" "config architecture"
 assert_contains "$out" "--binary-image iso-hybrid" "config binary image"
 assert_contains "$out" "--debian-installer none" "config installer"
 assert_contains "$out" "--archive-areas main contrib non-free-firmware" "config archive areas"
-# live-build rewrites sources.list after the chroot hooks, so the security pocket
-# has to be requested by config or the shipped image cannot take updates at all.
+# The security pocket has to be requested twice over: once for the build to
+# fetch from and once for the image to ship, and --security gates the shipped
+# one. Runs 41447034423 and 41452920694 both failed ISO verification because
+# only the build-time half was set.
 assert_contains "$out" "--mirror-chroot-security http://deb.debian.org/debian-security/" "config security mirror"
+assert_contains "$out" "--mirror-binary-security http://deb.debian.org/debian-security/" "config shipped security mirror"
+assert_contains "$out" "--security true" "config enables the security archive"
 ok "live-build config uses valid option names"
 
 printf '\nAll %d smoke checks passed.\n' "$pass"

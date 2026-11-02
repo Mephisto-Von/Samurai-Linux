@@ -19,13 +19,23 @@ lb config noauto \
     --iso-publisher "Samurai Linux Project" \
     --iso-volume "SAMURAI_LINUX" \
     --apt-indices false \
+    --security true \
     --mirror-bootstrap "http://deb.debian.org/debian/" \
     --mirror-chroot "http://deb.debian.org/debian/" \
     --mirror-chroot-security "http://deb.debian.org/debian-security/" \
-    --mirror-binary "http://deb.debian.org/debian/"
+    --mirror-binary "http://deb.debian.org/debian/" \
+    --mirror-binary-security "http://deb.debian.org/debian-security/"
 
-# --mirror-chroot-security is not decoration: live-build rewrites
-# /etc/apt/sources.list after the chroot hooks run, so a security entry the hook
-# added disappears from the shipped image. Run 41447034423 proved it - the hook
-# passed, the ISO built, and verify-iso.sh found no security archive to update
-# from. The hook's own fallback file now only matters when this option is absent.
+# Requesting the security pocket takes two options, and neither one is obvious
+# from the other: --mirror-chroot-security only says where the *build* fetches
+# security packages from, while the sources.list that ships inside the image is
+# written from --mirror-binary* and is gated on --security (lb_config(1):
+# --security "defines if the security repositories specified in the security
+# mirror options should be used or not"). live-build configures the chroot's
+# APT sources for the build and then replaces them with the final ones, so a
+# pocket that was only ever used to build with disappears from the shipped
+# system. Runs 41447034423 and 41452920694 each proved half of this: the first
+# shipped an image that could take no security update, and the second still did
+# after only the build-time mirror was set. verify-iso.sh inspects the squashfs
+# and fails the build when the shipped image configures no trixie-security
+# source, which is the only check that can see this at all.
