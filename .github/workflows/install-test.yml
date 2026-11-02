@@ -131,6 +131,46 @@ jobs:
           rm -f dist/samurai-linux-iso.zip
           find dist -maxdepth 2 -name '*.iso' -print
 
+      # Install-test is the signature-verification test: an ISO that was built
+      # but never authenticated is installed here, so authenticate it first. The
+      # key comes from the repository checkout, which git and its own history
+      # authenticate, and its fingerprint is compared against the copy recorded
+      # beside it - the artifact's own .asc would prove only self-consistency.
+      - name: Verify the release signature and checksum
+        run: |
+          set -euo pipefail
+          iso=$(find dist -maxdepth 1 -name '*.iso' -print -quit)
+          test -n "$iso"
+          test -f "$iso.sha256" || { echo "No checksum beside $iso" >&2; exit 1; }
+          test -f "$iso.sig" || { echo "No detached signature beside $iso" >&2; exit 1; }
+          test -f "$iso.sha256.sig" || { echo "The checksum beside $iso is unsigned" >&2; exit 1; }
+          export GNUPGHOME
+          GNUPGHOME=$(mktemp -d)
+          chmod 700 "$GNUPGHOME"
+          gpg --batch --import samurai/keys/samurai-release.asc
+          recorded=$(tr -d '[:space:]' < samurai/keys/samurai-release.fpr)
+          actual=$(gpg --with-colons --list-keys | awk -F: '$1 == "fpr" { print $10; exit }')
+          if [[ "$recorded" != "$actual" ]]; then
+            echo "The repository key is not the key the release names:" >&2
+            echo "  recorded: $recorded" >&2
+            echo "  imported: $actual" >&2
+            exit 1
+          fi
+          (cd dist && sha256sum -c "$(basename "$iso").sha256")
+          gpg --verify "$iso.sig" "$iso"
+          gpg --verify "$iso.sha256.sig" "$iso.sha256"
+          # nullglob: a build from before the manifest existed ships none, and a
+          # manual dispatch of such an artifact must not trip over the glob.
+          shopt -s nullglob
+          for manifest in dist/*.packages.tsv; do
+            if [[ ! -e "$manifest.sig" ]]; then
+              echo "The package manifest $manifest is unsigned" >&2
+              exit 1
+            fi
+            gpg --verify "$manifest.sig" "$manifest"
+            echo "Verified the signed package manifest: $manifest"
+          done
+
       - name: Install QEMU, OCR, and VNC tooling
         run: |
           set -euo pipefail

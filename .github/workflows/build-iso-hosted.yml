@@ -126,12 +126,43 @@ jobs:
           printf '%s\n' "$SAMURAI_SIGN_KEY_ARMORED" | gpg --batch --import
           iso=$(find dist -maxdepth 1 -name '*.iso' -print -quit)
           test -n "$iso"
-          printf '%s\n' "$SAMURAI_SIGN_PASSPHRASE" | gpg --batch --pinentry-mode loopback \
-            --passphrase-fd 0 --armor --detach-sign --local-user "$SAMURAI_SIGN_KEY" \
-            --output "$iso.sig" "$iso"
-          gpg --verify "$iso.sig" "$iso"
+          # Sign the ISO, its checksum and the package manifest. A checksum file
+          # that is not itself signed protects nothing: whoever can replace the
+          # ISO can rewrite the hash beside it.
+          sign() {
+            printf '%s\n' "$SAMURAI_SIGN_PASSPHRASE" | gpg --batch --pinentry-mode loopback \
+              --passphrase-fd 0 --armor --detach-sign --local-user "$SAMURAI_SIGN_KEY" \
+              --output "$1.sig" "$1"
+            gpg --verify "$1.sig" "$1"
+          }
+          sign "$iso"
+          if [[ ! -f "$iso.sha256" ]]; then
+            echo "The build produced no checksum beside $iso; an ISO without a signed checksum cannot be published" >&2
+            exit 1
+          fi
+          sign "$iso.sha256"
+          for manifest in dist/*.packages.tsv; do
+            if [[ -e "$manifest" ]]; then
+              sign "$manifest"
+            fi
+          done
           # Publish the public half so users can verify without the repo.
           gpg --armor --export "$SAMURAI_SIGN_KEY" > dist/samurai-release-key.asc
+          gpg --with-colons --fingerprints --list-keys "$SAMURAI_SIGN_KEY" \
+            | awk -F: '$1 == "fpr" { print $10; exit }' | tee dist/samurai-release-key.fpr
+          # The exported key is only a trust anchor if it is the key the
+          # repository documents. A rotated CI secret would otherwise sign a
+          # release nobody outside this runner could verify.
+          if [[ ! -s samurai/keys/samurai-release.fpr ]]; then
+            echo "samurai/keys/samurai-release.fpr is missing; the signing key has no published fingerprint" >&2
+            exit 1
+          fi
+          if ! cmp -s dist/samurai-release-key.fpr samurai/keys/samurai-release.fpr; then
+            echo "The CI signing key is not the key published under samurai/keys/" >&2
+            echo "  CI:  $(cat dist/samurai-release-key.fpr)" >&2
+            echo "  repo: $(cat samurai/keys/samurai-release.fpr)" >&2
+            exit 1
+          fi
           sha256sum dist/samurai-release-key.asc
           ls -lh dist
 
@@ -144,6 +175,8 @@ jobs:
             dist/*.sha256
             dist/*.sig
             dist/*.asc
+            dist/*.fpr
+            dist/*.packages.tsv
           if-no-files-found: error
           retention-days: 7
 
