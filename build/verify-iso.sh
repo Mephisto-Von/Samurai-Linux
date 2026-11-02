@@ -334,17 +334,20 @@ awk '{ ts = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9] "
 }' "$TMP_DIR/squashfs-listing.txt" > "$TMP_DIR/squashfs-modes.tsv"
 [[ -s "$TMP_DIR/squashfs-modes.tsv" ]] || die "the squashfs listing contains no file records"
 
+image_mode_problems=()
 assert_image_mode() {
     local path=$1 expect=$2 found
     found=$(awk -F'\t' -v p="$path" '$3 == p { print $1, $2; exit }' "$TMP_DIR/squashfs-modes.tsv")
-    [[ -n "$found" ]] || die "/$path is not in the squashfs metadata"
-    if [[ "$found" != "$expect" ]]; then
-        die "/$path is recorded as '$found', expected '$expect'"
+    if [[ -z "$found" ]]; then
+        image_mode_problems+=("/$path is not in the squashfs metadata")
+    elif [[ "$found" != "$expect" ]]; then
+        image_mode_problems+=("/$path is recorded as '$found', expected '$expect'")
     fi
 }
-# Every expected mode is the one build/config/hooks/normal/0120-security.hook.chroot
-# or build/build.sh sync_assets sets, so a mismatch means the hook stopped running
-# or live-build copied something else over it.
+# Every expected mode and owner is the one 0120-security.hook.chroot sets, so a
+# mismatch means the hook stopped running or live-build copied something else
+# over it. All of them are reported together: one build per mistake is expensive,
+# and a second wrong expectation is invisible behind the first.
 assert_image_mode etc/sudoers.d/90samurai '-r--r----- root/root'
 assert_image_mode etc/nftables.conf '-rw-r--r-- root/root'
 assert_image_mode etc/apt/preferences.d/99samurai '-rw-r--r-- root/root'
@@ -358,6 +361,10 @@ assert_image_mode etc/apt/sources.list.d/samurai-security.list '-rw-r--r-- root/
 assert_image_mode etc/systemd/journald.conf.d/99samurai.conf '-rw-r--r-- root/root'
 assert_image_mode usr/share/color-schemes/samurai-kuro.colors '-rw-r--r-- root/root'
 assert_image_mode usr/share/color-schemes/samurai-shiro.colors '-rw-r--r-- root/root'
+if (( ${#image_mode_problems[@]} > 0 )); then
+    printf '%s\n' "${image_mode_problems[@]}" >&2
+    die "${#image_mode_problems[@]} file(s) in the image do not carry the recorded permissions"
+fi
 
 # The published wallpaper count has to mean something about the shipped image,
 # not only about the repository: this is the gate that holds it.
