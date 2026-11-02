@@ -39,10 +39,12 @@ sha256sum -c ./*.sha256
 sudo dd if=samurai-linux-*-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
-The hybrid ISO boots on BIOS and UEFI systems. The live image uses Debian's
-signed UEFI shim, so it can boot with Secure Boot enabled. The **installed**
-system uses unsigned GRUB by default; disable Secure Boot or sign the installed
-bootloader if you need Secure Boot.
+The hybrid ISO boots on BIOS and UEFI systems with Secure Boot **disabled**.
+Nothing in this repository signs a bootloader: `grub-efi-amd64-bin` produces an
+unsigned EFI binary and no `shim` package is installed, so neither the live
+image nor the installed system satisfies Secure Boot's chain of trust. Booting
+with Secure Boot on requires either turning it off in firmware or enrolling your
+own key and signing the bootloader yourself.
 
 ## Live Session
 
@@ -66,8 +68,10 @@ branding. The steps are:
 2. **Location** - choose region and time zone.
 3. **Keyboard** - choose the keyboard layout.
 4. **Partitions** - use guided partitioning for a simple install, or manual
-   partitioning for a custom layout. LUKS full-disk encryption is available in
-   the partitioner.
+   partitioning for a custom layout. Guided partitioning creates an unencrypted
+   layout; encrypted installs depend on Debian's packaged Calamares configuration
+   plus `cryptsetup` being present, and **no Samurai test has ever installed to
+   an encrypted disk**, so full-disk encryption is not a supported path today.
 5. **Users** - create the account you will use after installation.
 6. **Summary** - review the disk changes. This is the last point before the
    installer writes to disk.

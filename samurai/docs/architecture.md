@@ -2,14 +2,47 @@
 
 > This document describes the target architecture. Implemented today: the
 > `live-build` ISO pipeline, the `samurai-ai` / `samurai-theme` /
-> `samurai-gaming` CLIs, and the Kuro/Shiro KDE color schemes. The installer,
-> model router, control center, and signed package repository are planned. See
-> [`../../README.md`](../../README.md) for current status.
+> `samurai-gaming` / `samurai-profile` / `samurai-recovery` CLIs, the Kuro/Shiro
+> KDE color schemes, an nftables/AppArmor/unattended-upgrades security baseline,
+> GPG-signed release artifacts, and a headless installer test that boots and
+> inspects an installed system. Not implemented: the AI runtime and model router,
+> the control center, a signed package repository, Secure Boot, and a first-boot
+> wizard. See [`../../README.md`](../../README.md) for current status.
+
+## Foundation Decision
+
+The project brief required a from-scratch base ("The base MUST be Linux From
+Scratch", "Do not silently replace LFS with Debian"). Samurai Linux does not do
+that. **It is built on Debian 13 (trixie) with `live-build`, and that deviation
+was chosen openly and approved by the project owner in November 2026** rather
+than slipped in.
+
+Why: an LFS base would have to supply, and then keep patched, the whole stack
+this distribution is judged on - toolchain, KDE Plasma and Qt, Mesa and Vulkan
+drivers, systemd, Calamares, the gaming layer and every library an AI runtime
+needs. That is a security-responsibility transfer, not a build preference: the
+result would be a distribution that ships unsolved CVEs in exchange for an
+origin story. Debian's archive provides the same components with a maintained
+CVE pipeline, signed Release files and a trixie-support window, which is what the
+requirements about security updates and recoverability actually need.
+
+What it costs, and what is therefore recorded as a known limitation:
+
+- Samurai Linux inherits Debian's package set, its init system and its release
+  cadence, so "custom distribution" here means a Debian-derived distribution with
+  its own image, tooling, themes, policy defaults and release signing.
+- The `DISTRIB_ID`/`lsb-release` rebrand is load-bearing and dangerous: it silently
+  changed `${distro_id}` to `Samurai`, which made `unattended-upgrades`' default
+  `Allowed-Origins` match no archive at all, so automatic security updates would
+  have stopped working on every installed system. Security policy therefore names
+  archive origins literally (`Debian:trixie-security`) and the build hook refuses
+  to continue if the archive's own `Origin:` field disagrees.
+- Any future change to this foundation requires the same explicit approval.
 
 ## Distribution
 - **Name**: Samurai Linux
 - **Base**: Debian Stable (starting with Debian 13 "Trixie")
-- **Development Model**: Custom distribution based on existing Linux distribution
+- **Development Model**: Custom distribution based on an existing Linux distribution
 
 ## Base System
 - **Architecture**: x86_64 initially
@@ -186,13 +219,16 @@
 - Never erase disks without explicit user confirmation
 
 ## Package Management and Updates
-- Debian's package ecosystem as foundation
-- Maintained Samurai Linux repository for custom packages
-- Package manifests, versioned releases, dependency management
-- Package signature verification, repository metadata
-- Security updates, upgrade testing, rollback/recovery guidance
-- Clear conflict and failure reporting
-- Controlled strategy for mixing repository types
+- Debian's package ecosystem as the only APT source; nothing is published as a
+  Samurai repository, because no Samurai `.deb` repository is built today
+- Versioned ISO releases with signed ISO, checksum and installed-package manifest
+- Security updates through Debian's `trixie-security` pocket, pinned at priority
+  600 and applied by `unattended-upgrades`, verified on the installed system
+- `samurai-profile` installs and removes grouped packages through APT and records
+  what it did; `samurai-recovery` keeps checksummed `/etc` and package-list
+  snapshots
+- Rollback after a failed update is a documented manual procedure, not a feature:
+  APT keeps no snapshot
 
 ## Build and Release Engineering
 - `live-build` pipeline driven by `build/build.sh`

@@ -302,6 +302,33 @@ grep -q 'packages.tsv' "$REPO_ROOT/build/verify-iso.sh" \
     || fail "ISO verification does not produce the installed-package manifest"
 ok "security defaults are configured in the image and verified after install"
 
+# 6f. Performance claims require a measurement. The harness must exist, must be
+# the thing the install test runs, and docs/performance.md must not have grown
+# an unmeasured number back - the section it replaced invented a boot time, an
+# idle-memory figure and a CPU load out of nothing.
+perf_script="$REPO_ROOT/build/measure-performance.sh"
+[ -f "$perf_script" ] || fail "the performance harness is missing"
+grep -q 'unavailable' "$perf_script" \
+    || fail "the performance harness has no honest fallback for a metric it cannot measure"
+grep -q 'label\\tvalue\\tunit\\tcommand' "$perf_script" \
+    || fail "the performance harness no longer pairs each value with the command that produced it"
+grep -q 'measure-performance.sh' "$REPO_ROOT/build/install-test.py" \
+    || fail "the install test never runs the performance harness"
+for metric in memory_used cpu_idle units_enabled services_running sha256_mib_per_s rootfs_used; do
+    grep -q "$metric" "$REPO_ROOT/build/install-test.py" \
+        || fail "the install test does not gate the $metric measurement"
+done
+for perf_doc in "$REPO_ROOT/samurai/docs/performance.md" "$REPO_ROOT/samurai/docs/testing.md"; do
+    if grep -Eq 'Boot time:[[:space:]]*[0-9]|Idle memory:[[:space:]]*[0-9]|CPU utilization:[[:space:]]*[0-9]' "$perf_doc"; then
+        fail "$(basename "$perf_doc") publishes a performance number that no measurement produced"
+    fi
+done
+for phrase in 'power-profiles-daemon' 'No compositor tuning' 'measure-performance.sh'; do
+    grep -qi "$phrase" "$REPO_ROOT/samurai/docs/performance.md" \
+        || fail "docs/performance.md no longer states the status of: $phrase"
+done
+ok "performance numbers can only come from the harness"
+
 # 7. Post-build helpers fail clearly without arguments
 if bash "$REPO_ROOT/scripts/analyze-iso.sh" >/dev/null 2>&1; then
     fail "analyze-iso.sh should fail without an ISO path"

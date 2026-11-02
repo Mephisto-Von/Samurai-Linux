@@ -1,6 +1,9 @@
 # Samurai Linux
 
-A Debian-based operating system combining AI-assisted computing, software development, cybersecurity, gaming, daily desktop productivity, privacy, and high performance.
+A Debian-based operating system for software development, local and cloud AI
+assistants, Linux gaming and daily desktop use. See
+[`docs/known-limitations.md`](docs/known-limitations.md) for what is not
+implemented yet.
 
 ## Edition
 **Samurai Linux** - Japanese Samurai themed, KDE Plasma desktop

@@ -1,44 +1,82 @@
 # Samurai Developer Environment
 
-> `samurai-editor` is a planned helper and is not included yet. Install editors
-> with `apt` until it exists.
+> **What the image actually contains** is `build-essential` (GCC, Make), CMake,
+> Ninja, Git, OpenSSH client, Python 3 with `venv`, Vim, curl and wget.
+> Everything else on this page is installed, not shipped: `samurai-profile`
+> adds it, and `samurai-profile plan <name>` shows what apt would do first.
+> `samurai-editor` is a planned helper and does not exist.
 
-## Core Tools
+## Profiles instead of a fat image
 
-### Version Control and SSH
-- Git - pre-installed with Samurai developer profile
-- SSH - configured with secure defaults
-- GitHub/GitLab CLI integration
+Shipping every toolchain turns a 3 GB desktop into a 12 GB one and pins the
+release to the union of twelve upstream cadences. So the base carries the
+toolchain needed to build what ships, and named profiles carry the rest:
 
-### Compilers and Build Systems
-- GCC - system compiler
-- Clang - alternative compiler with better C++ support
-- Make - standard build automation
-- CMake - cross-platform build system
-- Ninja - fast build system for C++ projects
+| Profile | What it adds |
+| --- | --- |
+| `c` | Clang, LLDB, ccache, pkg-config |
+| `python` | dev headers, pip, venv, pipx, tox |
+| `web` | Node.js and npm |
+| `rust` | rustc and cargo |
+| `go` | the Go toolchain |
+| `java` | the default JDK |
+| `databases` | PostgreSQL, MariaDB, Redis, SQLite |
+| `containers` | rootless Podman with its networking helpers |
+| `docker` | the Docker daemon |
+| `virtualization` | QEMU/KVM, libvirt, virt-manager |
+| `debug` | gdb, valgrind, strace, ltrace, elfutils |
+| `ml` | nothing: see below |
 
-### Package Managers and Languages
-- Python 3.x with venv support
-- Node.js LTS with npm
-- Rust (rustup) and Cargo
-- Go (goenv or gvm)
-- Java JDK with javac
-- Shell utilities (bash, zsh, fish)
+```bash
+samurai-profile list                 # the profiles above
+samurai-profile show rust            # what it means, package by package
+samurai-profile plan rust            # apt's own resolver, changes nothing
+sudo samurai-profile install rust    # install and record a manifest
+samurai-profile installed            # which profiles are complete
+sudo samurai-profile remove rust     # remove it and what only it pulled in
+```
+
+`containers` and `docker` are deliberately separate: Podman and the Docker
+daemon conflict over `/var/lib/containers` expectations and subuid ranges, and
+a profile that installs both produces a machine whose behaviour depends on
+which one started first.
+
+**`ml` has no package list on purpose.** PyTorch and TensorFlow in Debian are
+CPU builds behind the release, and the CUDA wheels people actually want come
+from a vendor index that is not a Debian archive. A profile that pretended
+otherwise would install something that cannot use the GPU it was installed
+for. `samurai-profile show ml` prints the venv and index-url commands instead.
+
+## Core tools that ship
+
+### Version control and remote access
+- Git; `openssh-client` for `git+ssh` and remotes. No SSH *server* is
+  configured, and the firewall default-drops inbound anyway - see
+  [`security.md`](security.md).
+
+### Compilers and build systems
+- GCC, Make (in `build-essential`), CMake, Ninja.
+- Clang and LLDB are the `c` and `debug` profiles.
+
+### Languages
+- Python 3 and `python3-venv` ship. pip, pipx, tox and the rest of the
+  interpreters are profiles.
 
 ## Editors and IDEs
 
-### VS Code-Compatible Workflows
-- VSCodium - open-source VS Code fork (pre-installed or easy install)
-- VS Code with Samurai extensions
+Nothing beyond Vim ships, and no editor configuration is applied to a new user.
+VS Code and VSCodium are not in Debian's archives at all - they are downloaded
+from third-party repositories, which this project does not sign, mirror or
+test, so there is no `samurai-profile` for them either. Install them the way
+their own documentation says and treat updates as your responsibility.
+Qt Creator, Neovim and JetBrains IDEs are ordinary apt or vendor installs.
 
-### Native Editors
-- Neovim - configured with lazy.nvim package manager
-- Vim - enhanced vi editor
-- Qt Creator - for Qt/C++ development
-- JetBrains IDEs (IntelliJ, PyCharm, WebStorm) via snaps or scripts
+## Checking that a profile really worked
 
-### Editor Configuration
-
-The Samurai editor configuration bundle is not shipped yet. Until it is,
-install and configure editors yourself (for example `apt-get install neovim`
-followed by your own `~/.config/nvim`).
+`samurai-profile install` records the versions dpkg reported after apt
+finished, and `installed` re-reads each one rather than trusting its own
+record, so a package that apt "installed" but dpkg left unconfigured shows as
+incomplete with the package named. Before touching anything, `samurai-recovery
+snapshot` captures `/etc` and the exact package set, and `restore-packages`
+removes whatever appeared after it - see
+[`known-limitations.md`](known-limitations.md) for what that cannot undo.

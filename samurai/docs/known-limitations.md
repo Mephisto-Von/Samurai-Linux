@@ -21,9 +21,11 @@
   labels on an installed system still come from Debian's packages.
 - **No first-boot wizard** - the installed system boots to SDDM; theme, AI, and
   gaming setup are manual commands after login.
-- **Installed system is not Secure Boot signed** - the live ISO uses Debian's
-  signed UEFI shim, but Calamares installs unsigned GRUB by default. Disable
-  Secure Boot after installation or sign the bootloader with your own keys.
+- **Secure Boot is not supported at all** - the image installs
+  `grub-efi-amd64-bin`, which produces an unsigned EFI binary, and no `shim`
+  package is present, so neither the live ISO nor the installed system boots with
+  Secure Boot enabled. Turn it off in firmware, or enrol your own key and sign the
+  bootloader; there is no signing workflow here to hand one over.
 - **Artifact retention** - hosted ISO artifacts expire after 7 days.
 
 ## Package management and updates
@@ -57,6 +59,17 @@
 - **Speech input/output not implemented** - these remain planned features
 
 ## Gaming
+- **Steam needs Debian's `non-free` archive** - the image is built from
+  `main contrib non-free-firmware`, and the Steam client itself lives in
+  `non-free`, so `samurai-gaming install-profile` cannot install Steam on the
+  shipped sources. It says so and stops instead of letting apt fail; enabling
+  `non-free` is a user decision this project does not make silently.
+- **No game has been run or measured** - the desktop phase proves GameMode and
+  MangoHUD are installed and that the MangoHUD interposer preloads in a live
+  session. No Proton title has been launched, no frame rate has been recorded,
+  and QEMU's software renderer could not produce one that means anything.
+- **No controller has been tested** - HID devices work the way Debian makes them
+  work; nothing in this project sets one up and no test touches one.
 - **Anti-cheat limitations** - some titles (kernel-level anti-cheat) do not
   work under Proton regardless of configuration
 - **NVIDIA drivers manual** - NVIDIA setup is documented but not auto-configured
@@ -64,6 +77,19 @@
   check ProtonDB before expecting a given game to run
 - **Overclocking excluded** - risky performance tweaks are optional and not
   enabled by default
+
+## Performance
+- **No published numbers** - the boot time, idle memory and CPU figures this file
+  used to imply were never measured, and the ones in `docs/performance.md`'s
+  predecessors have been removed. `build/measure-performance.sh` is now the only
+  source, and it runs inside the install test's desktop phase; until a green run
+  attaches a `performance.txt`, nothing may be quoted.
+- **No power profiles** - neither `power-profiles-daemon` nor TLP is in the image,
+  so the balanced / performance / power-saving modes described in the brief do not
+  exist. Nothing switches CPU governor or scheduler policy.
+- **No compositor or resource-limit tuning** - the image ships no `kwinrc`, and
+  there is no AI inference memory cap or load-triggered pause, because there is no
+  AI runtime to cap.
 
 ## Desktop and Themes
 - **Icons and cursors are pending** - the Kuro/Shiro color schemes and 22
@@ -75,5 +101,7 @@
 ## Scope
 - **Single architecture** - x86_64 only; no ARM or RISC-V builds
 - **KDE Plasma only** - no alternate desktop environments offered
-- **Debian Trixie base** - tied to Debian's package cadence; upstream packages
-  must be packaged into the Samurai repository for inclusion
+- **Debian Trixie base** - tied to Debian's package set, cadence and security
+  support. Extra tooling arrives by installing Debian packages through
+  `samurai-profile`, not by packaging anything for a Samurai repository, because
+  no such repository exists (see "Package management and updates" above).

@@ -2,16 +2,27 @@
 
 > **Historical document.** This records the original Codespace attempt. The
 > `debootstrap`/`xorriso` commands below are superseded and some were invalid
-> (for example `debootstrap --arch=x86_64` and `xorriso -as iso`). Use
+> (for example `debootstrap --arch=x86_64`, `xorriso -as iso`, and a `gpg --armor
+> --output file.sig file` that is missing `--detach-sign`). Use
 > [`build/README.md`](build/README.md) and `build/build.sh` instead.
+>
+> Paths under `/opt/samurai/` and `/samurai/rootfs` were that scratch
+> environment's layout. They are not part of the repository and nothing in the
+> image installs there; the maintained copies live in `samurai/docs/`,
+> `samurai/scripts/` and `samurai/themes/`.
+>
+> Claims below that were never backed by a recorded test are marked
+> **[retracted]** with what is actually true now.
 
 ## Historical State and Continuation Instructions
 
 ### Build Environment Status
 - **Current system**: Codespace environment (32GB disk, 2.3GB free, 7.8GB RAM total, 174MB free)
+  **[retracted]** - a one-machine snapshot from that Codespace, not a spec or a baseline
 - **Architecture**: x86_64
 - **Samurai rootfs**: Partially created at `/samurai/rootfs` (partial debootstrap attempted)
-- **Configuration**: Complete at `/opt/samurai/`
+- **Configuration**: Complete at `/opt/samurai/` **[retracted]** - the configuration
+  that ships is the live-build tree under `build/`
 
 ### What Has Been Built (Complete at /opt/samurai/)
 
@@ -32,7 +43,7 @@
 ├── themes/ - Kuro (#111214) / Shiro (#F5F0E6) color schemes
 │   └── kuro/colors.css - Dark theme spec
 │   └── shiro/colors.css - Light theme spec
-├── scripts/ - Functional CLI tools (verified working)
+├── scripts/ - CLI tools (present in this repository as samurai/scripts/*)
 │   ├── samurai-ai - 13 commands (chat, install-model, status, gpu/cpu-info,
 │   │             memory-budget, set-default, check-compatibility,
 │   │             credentials get|set|remove)
@@ -49,25 +60,42 @@
 - `build-pipeline.md` - 12-step pipeline from host verification to release signing
 - `desktop-and-themes.md` - Kuro/Shiro color palettes, Japanese Samurai motifs,
   theme selector, installation artwork
-- `developer-environment.md` - Core tools (Git, GCC, Clang, Make, CMake, Ninja),
-  languages (Python, Node, Rust, Go, Java), editors (VSCodium, Neovim, Qt Creator,
-  JetBrains), containers (Podman, Docker, QEMU/KVM)
+- `developer-environment.md` - **[retracted]** what actually ships is GCC via
+  `build-essential`, CMake, Ninja, Git, Python 3 and Vim; Clang, VSCodium,
+  Neovim, Qt Creator, JetBrains, Podman, Docker and QEMU/KVM are not in the
+  image. `samurai/docs/developer-environment.md` lists the real contents and the
+  `samurai-profile` names that install the rest.
 - `gaming.md` - Steam + Proton, Vulkan/Mesa, AMD/Intel/NVIDIA, GameMode, MangoHUD,
   Gamescope, controllers, gaming profile with documented configuration
-- `installation.md` - Live installer, partitioning, LUKS encryption, user account
-  creation, secure admin config, package selection (minimal/developer/gaming/AI/full),
-  first-boot wizard with 10 steps
-- `package-management.md` - Samurai repo structure, versioned releases, dependency
-  management, APT pinning, signature verification, security upgrades, upgrade testing,
-  rollback guidance, conflict reporting
-- `performance.md` - Minimal startup apps, power profiles (balanced/performance/power-saving),
-  KWin compositor config, resource monitoring (CPU/RAM/GPU/disk/AI workloads),
-  AI resource limits, reproducible baselines (boot time: 8-12s SSD, 30-45s HDD;
-  idle memory: 400-600MB; CPU: 2-5% at desktop)
+  **[partly retracted]** - only GameMode, MangoHUD and the Mesa/Vulkan drivers
+  ship; see `samurai/docs/gaming.md`
+- `installation.md` - **[retracted]** no first-boot wizard exists, and no encrypted
+  installation has ever been completed or tested by this project; see
+  `samurai/docs/installation.md` for what the installer actually does
+- `package-management.md` - **[retracted]** there is no Samurai APT repository, no
+  versioned repository and no pinning of Samurai packages, because none of that is
+  built. What exists is Debian's own archives plus security-pocket pinning in
+  `build/config/includes.chroot/etc/apt/preferences.d`, `unattended-upgrades`
+  configured for `Debian:trixie-security`, and the `samurai-profile` /
+  `samurai-recovery` CLIs. See `samurai/docs/security.md` and
+  `samurai/docs/known-limitations.md`.
+- `performance.md` - **[retracted]** the baselines this file once published
+  (boot time 8-12s SSD / 30-45s HDD, idle memory 400-600MB, CPU 2-5% at desktop)
+  were never measured by anything. `samurai/docs/performance.md` now explains how
+  `build/measure-performance.sh` produces real numbers and forbids publishing any
+  other kind. Power profiles, KWin tuning and AI resource limits are not
+  implemented.
 - `build-pipeline.md` - 12-step process (verified in documentation, execution blocked
   by environment constraints)
 
-#### Functional Scripts (ALL VERIFIED WORKING)
+#### Scripts as they were first written
+**[corrected]** "ALL VERIFIED WORKING" was never a verified statement: at the time
+nothing in the project ran them beyond a shell session on one Codespace. Today the
+automated checks are `tests/smoke.sh` (argument handling, failure paths, profile
+resolvers, recovery guards) and the install-test phases that run the CLIs on an
+installed system. Hardware strings below are that one Codespace's readings, not
+expected output.
+
 1. `samurai-theme` - Theme manager
    - `samurai-theme kuro` - Applies dark theme (#111214 with crimson #B52832,
      gold #B89A59 accents)
@@ -76,12 +104,13 @@
    - `samurai-theme auto` - Automatic light/dark switching based on time of day
    - `samurai-theme list` - Lists available themes
 
-2. `samurai-ai` - AI assistant CLI (13 commands, all functional)
+2. `samurai-ai` - AI assistant CLI (13 commands)
    - `samurai-ai chat "Hello"` - Chat with local Ollama model
-   - `samurai-ai gpu-info` - Hardware detection (reports: No GPU detected or
-     integrated graphics; AMD EPYC 7763 CPU detected)
-   - `samurai-ai cpu-info` - Shows 2-core AMD EPYC 7763 with full lscpu output
-   - `samurai-ai memory-budget` - Reports memory status (7.8GB total, 174MB free)
+   - `samurai-ai gpu-info` - Hardware detection (on that Codespace: no discrete GPU)
+   - `samurai-ai cpu-info` - CPU details from `lscpu` (that Codespace reported a
+     2-core AMD EPYC 7763)
+   - `samurai-ai memory-budget` - Memory status (that Codespace had 7.8GB total and
+     174MB free)
    - `samurai-ai set-default llama2` - Configures default model
    - `samurai-ai install-model <id>` - Pull model via Ollama
    - `samurai-ai list-models` - List available models
@@ -89,15 +118,19 @@
    - `samurai-ai set-default <model>` - Set default model (writes to
      ~/.config/samurai/ai-default)
    - `samurai-ai check-compatibility` - Check model/hardware compatibility
-   - `samurai-ai credentials set/get/remove` - Secure credential storage
-     (writes to ~/.config/samurai/credentials with base64-encoded keys)
+   - `samurai-ai credentials set/get/remove` - Credential storage at mode 0600,
+     base64-encoded and **not encrypted**; the CLI says so itself. A keyring-backed
+     store is not implemented.
    - `samurai-ai` (no args) - Usage/help output with all commands listed
 
 3. `samurai-gaming` - Gaming profile manager
-   - `samurai-gaming install-profile` - Installs Steam, GameMode, MangoHUD,
-     winetricks, configures Proton
-   - `samurai-gaming steam` - Launches Steam with MangoHUD overlay
-   - `samurai-gaming lutris` - Launches Lutris with MangoHUD overlay
+   - `samurai-gaming install-profile` - Enables i386, installs `steam-installer`,
+     GameMode and MangoHUD, plus Lutris/Gamescope/winetricks/protontricks when the
+     configured archives have them. It does not configure Proton, and it stops with
+     instructions if Debian's `non-free` archive (where the Steam client lives) is
+     not enabled.
+   - `samurai-gaming steam` - Launches Steam through GameMode and MangoHUD
+   - `samurai-gaming lutris` - Launches Lutris through GameMode and MangoHUD
 
 ### What Needs to Happen Next (to Generate Bootable ISO)
 
@@ -171,7 +204,9 @@ qemu-system-x86_64 -cdrom samurai.iso -m 4096 -display none -boot d
 - Verify AI runtime components
 
 #### Step 7: Validate Against Release Acceptance Criteria (17 points from docs/release-process.md)
-- Bootable ISO generated and validated ✓ (in progress)
+- Bootable ISO generated and validated - **not met**: the ISO builds and boots in
+  CI, but no automated install run has been green yet. The per-criterion status now
+  lives in `samurai/docs/release-process.md`, not here.
 - Installation and first boot tested
 - KDE Plasma works as primary desktop
 - Kuro and Shiro themes persist and function
@@ -249,10 +284,14 @@ qemu-system-x86_64 -cdrom samurai.iso -m 4096 -display none -boot d
 - AI model downloads require separate Ollama setup on target system
 
 ### Contact / Support
-- Documentation: /opt/samurai/docs/ and /opt/samurai/configs/
-- Scripts: /opt/samurai/scripts/ (samurai-ai, samurai-theme, samurai-gaming)
-- Configuration: /opt/samurai/configs/*.md
-- Themes: /opt/samurai/themes/kuro/ and /opt/samurai/themes/shiro/
+**[corrected]** those paths were the Codespace scratch layout. The real locations:
+
+- Documentation: `samurai/docs/` (maintained) and `samurai/configs/` (legacy design docs)
+- Scripts: `samurai/scripts/` (samurai-ai, samurai-theme, samurai-gaming,
+  samurai-profile, samurai-recovery)
+- Build pipeline: `build/` and `build/README.md`
+- Themes: `samurai/themes/kuro/` and `samurai/themes/shiro/`
+- Release signing key material: `samurai/keys/` (public half only)
 
 ---
 *Samurai Linux - AI-Powered, Secure, High-Performance Developer and Gaming OS*

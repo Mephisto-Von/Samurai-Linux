@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import os
 import re
 import shlex
@@ -294,13 +295,45 @@ class SerialConsole:
             raise Failure(f"serial command failed ({status}): {command}\n{clean}")
         return clean
 
-    def write_file(self, path: str, content: str) -> None:
-        """Write a guest file without fighting the serial line's quoting rules."""
+    def write_file(self, path: str, content: str, chunk_size: int = 3000) -> None:
+        """Write a guest file without fighting the serial line's quoting rules.
+
+        The tty line discipline ends a canonical line at 4096 bytes, so a long
+        payload cannot be typed as one line: it is staged in a base64 side file
+        and decoded only once every piece has landed.
+        """
         payload = base64.b64encode(content.encode("utf-8")).decode("ascii")
-        self.command(
-            f"printf %s {shlex.quote(payload)} | base64 -d > {shlex.quote(path)}",
-            timeout=60,
+        target = shlex.quote(path)
+        if len(payload) <= chunk_size:
+            self.command(f"printf %s {shlex.quote(payload)} | base64 -d > {target}", timeout=60)
+            return
+        staged = target + ".b64"
+        self.command(f": > {staged}", timeout=30)
+        for start in range(0, len(payload), chunk_size):
+            piece = shlex.quote(payload[start : start + chunk_size])
+            self.command(f"printf %s {piece} >> {staged}", timeout=60)
+        self.command(f"base64 -d {staged} > {target} && rm -f {staged}", timeout=60)
+
+    def pull_file(self, path: str, label: str, timeout: float = 240) -> bytes:
+        """Copy a guest file back over the serial line, byte for byte.
+
+        Reading the file plainly would wrap it at 80 columns and lose the
+        spacing that makes a report readable, so it travels base64-encoded.
+        """
+        self.sendline(
+            f"echo {LOG_BEGIN}; base64 -w0 {shlex.quote(path)} 2>/dev/null; echo; echo {LOG_END}"
         )
+        output, _ = self.expect(r"\r?\n" + LOG_END + r"\r?\n", timeout, label)
+        if LOG_BEGIN not in output:
+            return b""
+        payload = re.sub(r"[^A-Za-z0-9+/=]", "", output.rsplit(LOG_BEGIN, 1)[1])
+        if not payload:
+            return b""
+        try:
+            return base64.b64decode(payload)
+        except (ValueError, binascii.Error):
+            self.log(f"{label}: the base64 payload was corrupted in transit")
+            return b""
 
 
 class VNC:
@@ -972,26 +1005,16 @@ class InstallerTest:
             return
         self.log("copying the Calamares session log out of the live system")
         try:
-            self.serial.sendline(
-                f"echo {LOG_BEGIN}; base64 -w0 /root/.cache/calamares/session.log "
-                f"2>/dev/null; echo; echo {LOG_END}"
-            )
-            output, _ = self.serial.expect(
-                r"\r?\n" + LOG_END + r"\r?\n", 240, "Calamares session log"
-            )
-            if LOG_BEGIN not in output:
-                self.log("the Calamares log was empty or unavailable")
-                return
-            payload = output.rsplit(LOG_BEGIN, 1)[1]
-            payload = re.sub(r"[^A-Za-z0-9+/=]", "", payload)
-            if not payload:
-                self.log("the Calamares log was empty")
-                return
-            (self.work / "calamares-session.log").write_bytes(base64.b64decode(payload))
-            self.log("saved calamares-session.log")
-            self.log_copied = True
+            payload = self.serial.pull_file("/root/.cache/calamares/session.log", "Calamares session log")
         except Exception as exc:  # noqa: BLE001 - diagnostics are best effort
             self.log(f"could not copy the Calamares log: {exc}")
+            return
+        if not payload:
+            self.log("the Calamares log was empty or unavailable")
+            return
+        (self.work / "calamares-session.log").write_bytes(payload)
+        self.log("saved calamares-session.log")
+        self.log_copied = True
 
     def verify_boot_loader(self) -> None:
         """Check that the installer made the target disk bootable.
@@ -1429,6 +1452,56 @@ class InstallerTest:
             sample = image.convert("RGB").resize(size)
             return len({tuple(px) for px in sample.getdata()})
 
+    # Metrics the published performance claims are allowed to rest on. A core
+    # metric that came back "unavailable" means the harness measured nothing, so
+    # the run must not be reported as a pass.
+    CORE_METRICS = (
+        "memory_used",
+        "cpu_idle",
+        "units_enabled",
+        "services_running",
+        "sha256_mib_per_s",
+        "rootfs_used",
+    )
+
+    def measure_performance(self) -> dict[str, str]:
+        """Read the running cost of the installed desktop off the guest itself.
+
+        docs/performance.md may only publish what this returns. The script runs
+        inside the live Plasma session, so the numbers describe a desktop a user
+        would actually see, and every value travels with the command and host
+        that produced it.
+        """
+        assert self.serial
+        script_path = Path(__file__).resolve().parent / "measure-performance.sh"
+        script = script_path.read_text(encoding="utf-8")
+        self.serial.write_file("/usr/local/bin/samurai-measure-performance.sh", script)
+        self.serial.command("chmod 0755 /usr/local/bin/samurai-measure-performance.sh", timeout=30)
+        out = "/tmp/samurai-performance"
+        body = self.session_command(
+            f"rm -rf {out} && bash /usr/local/bin/samurai-measure-performance.sh "
+            f"--out-dir {out} --cpu-mib 64 --disk-mib 64 --sample-seconds 5",
+            timeout=600,
+        )
+        report = self.serial.pull_file(f"{out}/performance.txt", "performance report")
+        if not report:
+            raise Failure(f"the installed system produced no performance report:\n{body}")
+        (self.work / "performance.txt").write_bytes(report)
+
+        metrics: dict[str, str] = {}
+        for line in report.decode("utf-8", errors="replace").splitlines():
+            parts = line.split("\t")
+            if len(parts) == 4 and parts[0] != "label":
+                metrics[parts[0]] = parts[1]
+        missing = [name for name in self.CORE_METRICS if metrics.get(name, "").lower() in ("", "unavailable", "skipped")]
+        if missing:
+            raise Failure(
+                "these core performance metrics were never measured, so the run cannot "
+                f"be called a pass: {', '.join(missing)}\n{body}"
+            )
+        self.log("measured: " + ", ".join(f"{k}={v}" for k, v in sorted(metrics.items())))
+        return metrics
+
     def verify_desktop(self) -> None:
         self.start_reboot_vm("desktop")
         assert self.serial
@@ -1537,6 +1610,13 @@ class InstallerTest:
             # GPU, neither of which QEMU's software renderer provides.
             record("mangohud preload smoke", self.session_command(
                 "MANGOHUD=1 mangohud /bin/true 2>&1; echo rc=$?", timeout=120))
+
+            metrics = self.measure_performance()
+            record(
+                "measured performance",
+                "\n".join(f"{name} = {metrics[name]}" for name in sorted(metrics))
+                + "\nfull report, each value with the command that produced it: performance.txt",
+            )
 
             self.vnc.wake()
             shot = self.vnc.stable_capture("09-desktop.png")

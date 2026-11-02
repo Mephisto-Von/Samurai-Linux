@@ -183,15 +183,23 @@ the same name, so keep an offline backup of `.tools/samurai-signing-key.asc`,
 
 ### Current state
 
-The install test has not produced a green run yet: 16 dispatches have each
-reached further than the last, and the last recorded failure was in
-`root_shell()` on the installed system. Manual verification of a real Plasma
-session on hardware is still required before release.
+No install-test run has been green end to end yet, so there is no tag and no
+published release. Each dispatch has reached further than the previous one - the
+failures have moved from the live session, to partitioning, to the bootloader, to
+the sudo prompt on the installed system, and most recently to the security
+policy that `unattended-upgrades` was configured with. The suite now also reads
+back the installed security state, exercises `samurai-profile` and
+`samurai-recovery` on the installed system, and runs
+`build/measure-performance.sh` inside a live Plasma session when `--desktop` is
+used. Manual verification on real hardware, including a Secure Boot machine and
+an encrypted install, is still required before release.
 
 ## What the ISO contains
 
 - Debian 13 (Trixie), KDE Plasma, SDDM, Firefox, common KDE applications
-- Developer basics: Git, GCC/Clang via `build-essential`, CMake, Ninja, Python 3
+- Developer basics: Git, GCC (from `build-essential`), CMake, Ninja, Python 3,
+  Vim. Clang is **not** in the image; `samurai-profile install c` is the way
+  to get it.
 - `samurai-ai`, `samurai-theme`, and `samurai-gaming` in `/usr/local/bin`
 - Kuro and Shiro KDE color schemes in `/usr/share/color-schemes`
 - 22 Samurai wallpapers in `/usr/share/backgrounds/samurai`; `samurai-theme`

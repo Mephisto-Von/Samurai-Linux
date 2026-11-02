@@ -1,5 +1,12 @@
 # Samurai Performance Engineering
 
+> **Legacy design document.** Nothing below was implemented or measured. The
+> "Reproducible Baselines" numbers at the end of this file were written without
+> any system being booted, benchmarked or observed, and must not be quoted; the
+> same goes for the power profiles, KWin tuning and AI resource limits described
+> here. See [`../docs/performance.md`](../docs/performance.md) for how a real
+> number is produced by `build/measure-performance.sh`.
+
 ## System Optimization
 
 ### Startup and Services

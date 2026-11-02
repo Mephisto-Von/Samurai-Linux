@@ -24,6 +24,11 @@ samurai-ai credentials remove openai
 samurai-gaming steam --foo
 ```
 
+It also fails closed on repository-level lies: a shell call whose quoted message
+swallowed the next command, a profile that names packages nobody resolved, a
+security policy file that no gate reads back, and a `docs/performance.md` that
+publishes a number no harness measured.
+
 Do not run `samurai-gaming install-profile` as a smoke test: it installs packages
 and modifies the system.
 
@@ -73,6 +78,18 @@ checks the result over the serial console. Pass criteria:
   `plasmashell` runs, the compositor renders a non-blank frame,
   `samurai-theme set shiro` applies to the live session and is recorded in
   `kdeglobals`, and GameMode/MangoHud are installed with the interposer library
+- Security state is read back off the installed system rather than inferred from
+  installed packages: nftables, AppArmor and the apt timers are enabled units,
+  the *running* ruleset contains the default-deny ingress policy, the kernel has
+  AppArmor on and loaded more than zero profiles (how many are in enforcing mode
+  is reported, not claimed), no sudoers file grants passwordless root, the
+  `trixie-security` pocket is configured and named by `unattended-upgrades`'
+  effective `Allowed-Origins`, and the policy files are root-owned
+- The package tools run on the installed system: `samurai-profile list/plan`
+  resolves every shipped profile and refuses an unknown one, `samurai-recovery`
+  takes a snapshot, verifies its checksums, restores a modified `/etc` file
+  without losing it, reports that nothing needs removing, and prunes old
+  snapshots
 
 Still manual, and not automatable here: LUKS unlock on real firmware, UEFI on
 real hardware, Secure Boot, and an actual Proton title with the overlay visible
@@ -101,13 +118,24 @@ Covered by the `--desktop` phase above, except the hardware-only items:
 - MangoHUD overlay displays (`MANGOHUD=1 %command%`)
 - Controller detected and usable
 
-### 8. Performance Baselines
-Measure and compare against documented baselines:
+### 8. Performance Measurements
+There are no documented baselines to compare against, and there will not be any
+until a run produces them. `build/measure-performance.sh` measures boot time,
+enabled and running unit counts, memory in use, idle CPU, a fixed SHA-256
+throughput, a compiler probe, disk write speed, the GL renderer and root
+filesystem size, and writes each value next to the command and the machine that
+produced it:
+
+```bash
+bash build/measure-performance.sh --out-dir /tmp/perf
 ```
-Boot time:       8-12 seconds (SSD), 30-45 seconds (HDD)
-Idle memory:     400-600 MB (KDE Plasma)
-CPU utilization: 2-5% at desktop
-```
+
+The install test runs it inside the live Plasma session and fails when a core
+metric (`memory_used`, `cpu_idle`, `units_enabled`, `services_running`,
+`sha256_mib_per_s`, `rootfs_used`) comes back `unavailable`, so a green run
+always carries a `performance.txt`. Quoting a number anywhere else requires the
+command, host and run alongside it - see
+[`performance.md`](performance.md).
 
 ## Release Test Matrix
 | Component | Minimum coverage |
@@ -117,7 +145,7 @@ CPU utilization: 2-5% at desktop
 | Themes | Kuro, Shiro, auto-switch |
 | AI | One local model, local-only mode |
 | Gaming | Steam + Proton + GameMode + MangoHUD |
-| Performance | Boot time, idle RAM, idle CPU |
+| Performance | `build/measure-performance.sh` inside the install-test desktop phase: boot time, unit counts, idle RAM, idle CPU, compute and disk throughput |
 
 ## Automating Tests
 - `tests/smoke.sh` runs in GitHub Actions (`.github/workflows/ci.yml`) on every push and pull request

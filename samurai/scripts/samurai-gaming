@@ -43,6 +43,15 @@ cmd_install_profile() {
     if ! apt-cache show steam-installer >/dev/null 2>&1; then
         die "steam-installer is unavailable. Enable the 'contrib' component in your APT sources and rerun this command."
     fi
+    # The launcher itself is not DFSG-free, so Debian keeps it in 'non-free' and
+    # steam-installer cannot be satisfied without it. Saying so here beats apt
+    # failing with unmet dependencies two minutes into the install.
+    if ! apt-cache show steam >/dev/null 2>&1; then
+        die "the Steam client lives in Debian's 'non-free' archive, which is not enabled.
+Add non-free to your APT sources (for example:
+  deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+then 'apt-get update') and rerun this command."
+    fi
 
     local failed=0 pkg
     for pkg in steam-installer gamemode mangohud; do
