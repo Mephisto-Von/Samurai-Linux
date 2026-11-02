@@ -39,6 +39,18 @@ command -v visudo >/dev/null 2>&1 || fail "visudo is not in the image to validat
 visudo -c -f "$sudoers" >/dev/null 2>&1 || fail "$sudoers is not valid sudoers syntax"
 visudo -c >/dev/null 2>&1 || fail "the merged sudoers configuration does not validate"
 
+# /usr/local/bin is filled from the repository tree, whose owner is whoever ran
+# the checkout - uid 1001 in a hosted build, which is no user at all inside the
+# chroot. Writing to a directory you own does not need the group bit, so that uid
+# could replace a samurai-* script that users run through sudo. Owning the
+# directory and its tools is what makes the shipped CLIs root-controlled.
+chown -R root:root /usr/local/bin
+chmod 0755 /usr/local/bin
+for script in /usr/local/bin/samurai-*; do
+	[ -f "$script" ] || continue
+	chmod 0755 "$script"
+done
+
 # Exception directory for the firewall. Empty by design; see nftables.conf.
 mkdir -p /etc/nftables.d
 chown root:root /etc/nftables.d
