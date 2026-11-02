@@ -1171,6 +1171,25 @@ class InstallerTest:
         os_release = values.get("os-release", "")
         if "NAME=" not in os_release:
             raise Failure("the installed system has no /etc/os-release")
+        # sudo ignores a group- or world-writable drop-in and nft refuses to read
+        # one, so a mode that drifted in installation leaves the policy present
+        # and dead. Checked against the modes the security hook sets.
+        modes = [line.split() for line in
+                 values.get("policy file modes", "").splitlines() if line.split()]
+        if len(modes) != 2 or any(len(fields) != 2 for fields in modes):
+            raise Failure(
+                "could not read both policy file modes from the installed system: "
+                f"{values.get('policy file modes')!r}"
+            )
+        for path, (mode, owner) in zip(
+            ("/etc/sudoers.d/90samurai", "/etc/nftables.conf"), modes
+        ):
+            expected = "440" if "sudoers" in path else "644"
+            if mode != expected or owner != "root":
+                raise Failure(
+                    f"{path} on the installed system is {mode} owned by {owner}, "
+                    f"expected {expected} owned by root"
+                )
         if self.branded:
             if 'NAME="Samurai Linux"' not in os_release:
                 raise Failure(f"installed os-release is not Samurai-branded:\n{os_release}")
