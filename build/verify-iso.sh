@@ -328,6 +328,22 @@ assert_image_mode etc/apt/preferences.d/99samurai '-rw-r--r-- root/root'
 assert_image_mode etc/apt/apt.conf.d/20samurai-security '-rw-r--r-- root/root'
 assert_image_mode usr/local/bin/samurai-profile '-rwxr-xr-x root/root'
 assert_image_mode usr/local/bin/samurai-recovery '-rwxr-xr-x root/root'
+# apt reads a source file only if it is not group- or world-writable, and a
+# security archive the updater cannot read is the failure this whole check exists
+# to prevent.
+assert_image_mode etc/apt/sources.list.d/samurai-security.list '-rw-r--r-- root/root'
+
+# The published wallpaper count has to mean something about the shipped image,
+# not only about the repository: this is the gate that holds it.
+image_wallpapers=$(awk '{ name = $NF; sub(/^\./, "", name)
+    if (name ~ /^usr\/share\/backgrounds\/samurai\/[^/]+\.jpg$/) count++ }
+    END { print count + 0 }' "$TMP_DIR/squashfs-listing.txt")
+source_wallpapers=$(find "$REPO_ROOT/build/config/includes.chroot/usr/share/backgrounds/samurai" \
+    -type f -name '*.jpg' | wc -l | tr -d '[:space:]')
+if [[ "$image_wallpapers" != "$source_wallpapers" ]]; then
+    die "the image carries $image_wallpapers wallpapers, the build tree has $source_wallpapers"
+fi
+log "the image carries all $image_wallpapers wallpapers"
 
 log "Writing and validating the release package manifest"
 TAB=$'	'  # the manifest separator; a literal tab is too easy to lose in an edit

@@ -119,7 +119,8 @@ gpg --verify samurai-linux-<version>-amd64.iso.sig
 
 `samurai-ai` stores provider keys through the Secret Service (`secret-tool`,
 backed by KWallet) and says so in `samurai-ai status`. When no Secret Service is
-running it falls back to a `0600` file under `~/.config/samurai-ai/` and labels
+running it falls back to a `0600` file at `$XDG_CONFIG_HOME/samurai/credentials`
+(`~/.config/samurai/credentials`) and labels
 that fallback `NOT encrypted` rather than pretending it is a wallet. No AI
 request leaves the machine without an explicit user action, and privileged
 actions a model proposes require confirmation first.

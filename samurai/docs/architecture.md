@@ -134,6 +134,16 @@ What it costs, and what is therefore recorded as a known limitation:
 - Secure credential storage, never hardcode secrets
 
 ## Developer Environment
+
+> Status: the image itself installs only the basics from
+> `build/config/package-lists/samurai.list.chroot` - Git, `build-essential`
+> (GCC and Make), CMake, Ninja, Python 3 and shell tooling. Everything listed
+> below beyond those is a target, reached on an installed system by
+> `samurai-profile install <profile>`, which resolves each profile against the
+> archive at build time and has never been run with network access on a real
+> installed system. Clang, VSCodium, Qt Creator, JetBrains, Podman, Docker and
+> the AI/ML stacks named below are not in the image.
+
 ### Core Tools
 - Git and SSH, GCC and Clang, Make, CMake, Ninja
 - Python and virtual environments, Node.js and npm-compatible workflows
@@ -176,6 +186,14 @@ What it costs, and what is therefore recorded as a known limitation:
 - Secure Boot where signing workflow permits
 
 ## Gaming and Graphics
+
+> Status: the image ships Mesa (GL and Vulkan drivers), GameMode and MangoHud.
+> Steam is not in the image and lives in Debian `non-free`, which the shipped APT
+> sources do not enable, so `samurai-gaming install-profile` refuses until the
+> user adds it. Lutris, Heroic Games Launcher and Gamescope are not installed;
+> Heroic is not in Debian at all. No Proton title and no overlay have ever been
+> run here, because the test VM has no GPU. See
+> [`gaming.md`](gaming.md).
 - Steam and Proton
 - Vulkan, Mesa, AMD/Intel/NVIDIA graphics
 - Lutris, Heroic Games Launcher
@@ -183,6 +201,16 @@ What it costs, and what is therefore recorded as a known limitation:
 - Controllers and gaming audio devices
 
 ## Performance Engineering
+
+> Status: what the image actually does for performance is the package set -
+> pinned Mesa and Vulkan drivers, `build-essential`/CMake/Ninja, persistent
+> journald, GameMode and MangoHud - plus the unit counts the installer leaves
+> behind, which `build/measure-performance.sh` measures rather than describes.
+> Hardware-aware power profiles, balanced/performance/power-saving modes,
+> compositor tuning, AI resource limits and the monitoring dashboard named below
+> are not implemented; there is no `power-profiles-daemon` or `kwinrc` in the
+> image. Measured numbers appear only in a run's `performance.txt` artifact, and
+> [`performance.md`](performance.md) explains how one becomes publishable.
 - Minimal unnecessary startup applications
 - Sensible background-service defaults
 - Hardware-aware power profiles
@@ -194,11 +222,23 @@ What it costs, and what is therefore recorded as a known limitation:
 - Reproducible baselines for benchmarking
 
 ## KDE Plasma and Samurai Design System
+
+> Status: the Kuro and Shiro `.colors` schemes, the 22 wallpapers, the boot and
+> GRUB branding and the installer artwork ship and are checked by
+> `build/verify-iso.sh`; the icon set and cursor theme are still planned. See
+> [`desktop-and-themes.md`](desktop-and-themes.md).
 - Kuro and Shiro themes as specified
 - Original wallpapers, logos, icons, terminal colors, login branding, installer artwork
 - Japanese Samurai-inspired motifs with restraint
 
 ## System Dashboard and Settings
+
+> Status: not implemented. There is no Samurai Control Center, no dashboard
+> package and no first-boot wizard; the installed system boots to SDDM and the
+> configuration entry points are the CLIs in `/usr/local/bin`
+> (`samurai-theme`, `samurai-ai`, `samurai-gaming`, `samurai-profile`,
+> `samurai-recovery`). Everything listed below is the target design for a
+> dashboard that does not exist yet.
 - Samurai Control Center using KDE-compatible technologies
 - System information, hardware/driver status, software/updates
 - AI models and providers, development profiles, gaming configuration

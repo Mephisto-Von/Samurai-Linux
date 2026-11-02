@@ -118,9 +118,10 @@ expected output.
    - `samurai-ai set-default <model>` - Set default model (writes to
      ~/.config/samurai/ai-default)
    - `samurai-ai check-compatibility` - Check model/hardware compatibility
-   - `samurai-ai credentials set/get/remove` - Credential storage at mode 0600,
-     base64-encoded and **not encrypted**; the CLI says so itself. A keyring-backed
-     store is not implemented.
+   - `samurai-ai credentials set/get/remove` - Credential storage at mode 0600;
+     the fallback file holds the key in plain text and the CLI says so itself
+     (`mode 600, not encrypted`). Keyring-backed storage runs through
+     `secret-tool` when a Secret Service is answering.
    - `samurai-ai` (no args) - Usage/help output with all commands listed
 
 3. `samurai-gaming` - Gaming profile manager

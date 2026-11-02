@@ -89,7 +89,7 @@ samurai-profile remove debug         # Removes via APT's own orphan handling
 
 samurai-recovery snapshot before-change
 samurai-recovery list
-samurai-recovery verify <snapshot>   # Checksums every stored file
+samurai-recovery verify <snapshot>   # sha256-checks each stored payload file
 samurai-recovery restore-etc <snapshot> /etc/nftables.conf
 ```
 
@@ -142,9 +142,9 @@ armored detached `.sig` when signing is enabled.
 | Foundation decision | Debian 13 `live-build`, approved as a deviation from the Linux-from-Scratch requirement and recorded in [`samurai/docs/architecture.md`](samurai/docs/architecture.md) |
 | Kuro / Shiro KDE `.colors` schemes | Implemented; 22 wallpapers at 1920x1080 shipped; icons/cursors pending |
 | `samurai-ai` CLI | Implemented and smoke-tested; no AI runtime ships, cloud chat not implemented |
-| `samurai-theme` CLI | Applies real KDE color schemes; verified against a live Plasma session by the install test's desktop phase |
+| `samurai-theme` CLI | Applies real KDE color schemes; the install test's desktop phase checks it against a live Plasma session, and that phase has not produced a green run yet |
 | `samurai-gaming` CLI | Installs `steam-installer`, GameMode, MangoHUD and optional tools; refuses to pretend when `non-free` is off |
-| `samurai-profile` / `samurai-recovery` | Implemented and now run against an installed system in CI; profile installs need network, which the test guest does not have |
+| `samurai-profile` / `samurai-recovery` | Implemented; the install test asserts against them on the installed system, though no install-test run has gone green end to end, and profile installs need network, which the test guest does not have |
 | Security defaults in the image | nftables default-deny, AppArmor profiles, sudo policy, `unattended-upgrades` for `Debian:trixie-security`, APT pinning - read back off the installed system, not asserted from package presence |
 | `live-build` ISO pipeline | Hosted workflow builds a bootable hybrid ISO |
 | CI (ShellCheck + smoke tests) | Passing on GitHub Actions |
@@ -178,7 +178,7 @@ or tested are marked **[retracted]** there.
 # Analyze a built ISO with REA
 ./scripts/analyze-iso.sh path/to/samurai.iso
 
-# Run the combined post-build workflow (REA + Heretic)
+# Run the combined post-build workflow (REA; add --heretic <model> for Heretic)
 ./scripts/post-build-workflow.sh path/to/samurai.iso
 
 # Decensor a model with Heretic (requires: pip install heretic-llm)

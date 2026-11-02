@@ -206,7 +206,8 @@ an encrypted install, is still required before release.
 - Developer basics: Git, GCC (from `build-essential`), CMake, Ninja, Python 3,
   Vim. Clang is **not** in the image; `samurai-profile install c` is the way
   to get it.
-- `samurai-ai`, `samurai-theme`, and `samurai-gaming` in `/usr/local/bin`
+- `samurai-ai`, `samurai-theme`, `samurai-gaming`, `samurai-profile` and
+  `samurai-recovery` in `/usr/local/bin`
 - Kuro and Shiro KDE color schemes in `/usr/share/color-schemes`
 - 22 Samurai wallpapers in `/usr/share/backgrounds/samurai`; `samurai-theme`
   applies the theme's wallpaper (`kuro.jpg` / `shiro.jpg`) on theme switch
@@ -233,7 +234,7 @@ an encrypted install, is still required before release.
 | `build/config/package-lists/*.list.chroot` | Packages installed in the chroot |
 | `build/config/hooks/normal/*.hook.chroot` | Chroot setup (permissions, color schemes, cleanup) |
 | `build/config/includes.chroot/` | Files copied verbatim into the ISO |
-| `samurai/scripts/` | Source of truth for the three CLIs |
+| `samurai/scripts/` | Source of truth for the five CLIs |
 | `samurai/themes/` | Source of truth for the KDE `.colors` schemes |
 | `Samurai Walls/` | Source art for the wallpapers and installer slide |
 | `build/make-wallpapers.py` | Generates 1920x1080 wallpapers + the Calamares slide from that art |

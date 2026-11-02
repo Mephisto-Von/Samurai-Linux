@@ -1548,8 +1548,19 @@ class InstallerTest:
                 report.append(f"### {label}\n{output}\n")
                 self.log(f"{label}: {output[:1500]}")
 
-            record("color schemes known to Plasma", self.session_command(
-                "plasma-apply-colorscheme --list-schemes 2>&1 || true"))
+            schemes = self.session_command("plasma-apply-colorscheme --list-schemes 2>&1 || true")
+            record("color schemes known to Plasma", schemes)
+            # Gated, not just logged: a scheme file that Plasma's own tool cannot
+            # see would make every check below pass on a theme the user could
+            # never pick. Matched on the theme word because --list-schemes prints
+            # the scheme's Name= ("Samurai Kuro") while kdeglobals records the
+            # file basename ("samurai-kuro").
+            for scheme in ("kuro", "shiro"):
+                if scheme not in schemes.lower():
+                    raise Failure(
+                        f"Plasma does not know the {scheme} color scheme, so the shipped "
+                        f"scheme files are not usable:\n{schemes}"
+                    )
             record("gamemode daemon", self.session_command(
                 "systemctl --user status gamemoded --no-pager 2>&1 | head -n 8 || true"))
 

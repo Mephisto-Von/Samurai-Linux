@@ -161,7 +161,11 @@ wallpaper_dir="$REPO_ROOT/build/config/includes.chroot/usr/share/backgrounds/sam
 assert_file "$wallpaper_dir/kuro.jpg"
 assert_file "$wallpaper_dir/shiro.jpg"
 wallpaper_count=$(find "$wallpaper_dir" -type f -name '*.jpg' | wc -l)
-(( wallpaper_count >= 20 )) || fail "expected at least 20 wallpapers, found $wallpaper_count"
+# Exact, not a floor: README and the desktop docs publish this number, and a
+# count nobody holds still is a claim that drifts out of date silently. When this
+# fails deliberately, update the published figure in README.md,
+# samurai/docs/desktop-and-themes.md and build/README.md.
+(( wallpaper_count == 22 )) || fail "the documents publish 22 wallpapers, the tree has $wallpaper_count"
 assert_file "$REPO_ROOT/build/make-wallpapers.py"
 grep -q 'plasma-apply-wallpaperimage' "$REPO_ROOT/samurai/scripts/samurai-theme" \
     || fail "samurai-theme does not apply the theme wallpaper"
