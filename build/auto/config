@@ -21,4 +21,11 @@ lb config noauto \
     --apt-indices false \
     --mirror-bootstrap "http://deb.debian.org/debian/" \
     --mirror-chroot "http://deb.debian.org/debian/" \
+    --mirror-chroot-security "http://deb.debian.org/debian-security/" \
     --mirror-binary "http://deb.debian.org/debian/"
+
+# --mirror-chroot-security is not decoration: live-build rewrites
+# /etc/apt/sources.list after the chroot hooks run, so a security entry the hook
+# added disappears from the shipped image. Run 41447034423 proved it - the hook
+# passed, the ISO built, and verify-iso.sh found no security archive to update
+# from. The hook's own fallback file now only matters when this option is absent.

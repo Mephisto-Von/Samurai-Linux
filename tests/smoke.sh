@@ -348,6 +348,9 @@ assert_contains "$out" "--architecture amd64" "config architecture"
 assert_contains "$out" "--binary-image iso-hybrid" "config binary image"
 assert_contains "$out" "--debian-installer none" "config installer"
 assert_contains "$out" "--archive-areas main contrib non-free-firmware" "config archive areas"
+# live-build rewrites sources.list after the chroot hooks, so the security pocket
+# has to be requested by config or the shipped image cannot take updates at all.
+assert_contains "$out" "--mirror-chroot-security http://deb.debian.org/debian-security/" "config security mirror"
 ok "live-build config uses valid option names"
 
 printf '\nAll %d smoke checks passed.\n' "$pass"
