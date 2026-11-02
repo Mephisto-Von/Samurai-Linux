@@ -382,19 +382,43 @@ TAB=$'	'  # the manifest separator; a literal tab is too easy to lose in an edit
 # Version tracking for one build: the exact package set the ISO carries, which is
 # what a vulnerability triage or a bug report needs to be able to name.
 MANIFEST="${ISO%.iso}.packages.tsv"
+# Parse by "Key:" prefix instead of a fixed substr offset, flush a record when a
+# new Package: header arrives as well as on the blank line, and replace any tab
+# inside a value: this file is read back as tab-separated, and run 41520207923
+# found a row that was not three fields wide without being able to say which one.
 awk '
-    /^Package: / { package = substr($0, 10) }
-    /^Version: / { version = substr($0, 10) }
-    /^Architecture: / { architecture = substr($0, 15) }
-    /^Status: / { installed = ($0 == "Status: install ok installed") }
-    /^$/ {
-        if (package != "" && installed) printf "%s\t%s\t%s\n", package, version, architecture
-        package = ""; version = ""; architecture = ""; installed = 0
+    function emit() {
+        if (pkg != "" && status == "install ok installed") {
+            if (version == "" || arch == "")
+                printf "# %s: installed with %s\n", pkg, \
+                    (version == "" ? "no Version field" : "no Architecture field")
+            else printf "%s\t%s\t%s\n", pkg, version, arch
+        }
+        pkg = ""; version = ""; arch = ""; status = ""
     }
-    END { if (package != "" && installed) printf "%s\t%s\t%s\n", package, version, architecture }
+    { line = $0; sub(/\r$/, "", line) }
+    line ~ /^[A-Za-z][A-Za-z0-9-]*:/ {
+        key = line; sub(/:.*/, "", key)
+        value = line; sub(/^[^:]*:[ ]?/, "", value)
+        gsub(/\t/, " ", value)
+        if (key == "Package") { emit(); pkg = value }
+        else if (key == "Version") version = value
+        else if (key == "Architecture") arch = value
+        else if (key == "Status") status = value
+        next
+    }
+    line ~ /^[[:space:]]*$/ { emit(); next }
+    END { emit() }
 ' "$ROOT/var/lib/dpkg/status" | sort > "$MANIFEST"
 [[ -s "$MANIFEST" ]] || die "the manifest is empty: dpkg status produced nothing"
+if grep -q '^# ' "$MANIFEST"; then
+    printf '%s\n' "installed packages this build cannot name precisely:" >&2
+    grep '^# ' "$MANIFEST" | head -n 10 >&2
+    die "dpkg status has installed packages with no version or architecture"
+fi
 if awk -F'\t' 'NF != 3 { bad = 1 } END { exit bad }' "$MANIFEST"; then
+    printf '%s\n' "manifest rows that are not package<TAB>version<TAB>architecture (^I is a tab):" >&2
+    awk -F'\t' 'NF != 3' "$MANIFEST" | head -n 5 | cat -A >&2
     die "the manifest has a line without package, version and architecture"
 fi
 manifest_count=$(wc -l < "$MANIFEST")
