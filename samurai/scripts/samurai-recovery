@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# Samurai recovery snapshots.
+#
+# What this is: a repeatable way to capture the state that a broken update or a
+# bad configuration edit actually destroys - the system configuration, the exact
+# package versions, the manual package selections and the enabled services - and
+# to put pieces of it back.
+#
+# What this is not: a filesystem snapshot. It does not capture /home, the package
+# database or block data, it cannot downgrade a package that was upgraded in
+# place, and a compromised root cannot be trusted to have recorded honest
+# snapshots. Whole-system rollback needs the installer or a filesystem
+# snapshotter such as btrfs+snapper, which Samurai Linux does not yet ship;
+# docs/known-limitations.md records that.
+set -euo pipefail
+
+STORE=${SAMURAI_RECOVERY_STORE:-/var/lib/samurai/recovery}
+KEEP=${SAMURAI_RECOVERY_KEEP:-5}
+
+log() { printf '%s\n' "$*"; }
+warn() { printf 'Warning: %s\n' "$*" >&2; }
+die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+
+as_root() {
+    if ((EUID == 0)); then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        die "Root privileges are required and sudo is not available"
+    fi
+}
+
+usage() {
+    cat <<'EOF'
+Samurai recovery snapshots
+
+Usage: samurai-recovery <command> [args...]
+
+Commands:
+  snapshot [label]         Capture /etc, package versions, manual selections and
+                           enabled services into a checksummed archive
+  list                     Show the stored snapshots, oldest first
+  verify [snapshot]        Check a snapshot's checksums (default: the newest)
+  restore-etc [snap] FILE  Restore named files from a snapshot's /etc archive
+  restore-packages [snap]  List, or with --apply remove, packages added since a
+                           snapshot
+  prune                    Keep the newest 5 snapshots (override: SAMURAI_RECOVERY_KEEP)
+
+A snapshot is named by its directory under /var/lib/samurai/recovery; any
+substring of that name is accepted wherever a snapshot is asked for.
+EOF
+}
+
+snapshot_dirs() {
+    find "$STORE" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort
+}
+
+# pick_snapshot [arg]: the named snapshot, or the newest when no argument was
+# given. Fails loudly rather than restoring from something half-written.
+pick_snapshot() {
+    local arg=${1:-} found
+    if [[ -n "$arg" && -d "$arg" ]]; then
+        printf '%s\n' "$arg"
+        return 0
+    fi
+    if [[ -n "$arg" ]]; then
+        found=$(snapshot_dirs | grep -F -- "$arg" | tail -n 1)
+        [[ -n "$found" ]] || die "No snapshot matching '$arg' in $STORE (run: samurai-recovery list)"
+    else
+        found=$(snapshot_dirs | tail -n 1)
+        [[ -n "$found" ]] || die "No snapshots in $STORE (run: samurai-recovery snapshot)"
+    fi
+    printf '%s\n' "$found"
+}
+
+cmd_snapshot() {
+    local label=${1:-} stamp dir
+    [[ -z "${label//[A-Za-z0-9._-]/}" ]] \
+        || die "a label may contain only letters, digits, dot, dash and underscore"
+    command -v dpkg-query >/dev/null 2>&1 || die "dpkg-query not found: this is a Debian-family tool"
+    command -v apt-mark >/dev/null 2>&1 || die "apt-mark not found: this is a Debian-family tool"
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    dir="$STORE/$stamp${label:+-$label}"
+    as_root mkdir -p -m 0700 "$dir"
+
+    log "Capturing /etc..."
+    # Symlinks are stored as links, not as their targets: that is what a restore
+    # of /etc/alternatives or a masked unit needs to see.
+    as_root tar -C / -czf "$dir/etc.tar.gz" etc
+    log "Capturing package and service state..."
+    # Every redirect runs inside the privileged shell: the store directory is
+    # 0700 root, so a shell redirect evaluated as the calling user would fail.
+    as_root sh -c "dpkg-query -W -f='\${Package}\t\${Version}\t\${db:Status-Abbrev}\n' > '$dir/package-versions.tsv'"
+    as_root sh -c "apt-mark showmanual | sort > '$dir/manual-selections.txt'"
+    as_root sh -c "ls -1d /etc/systemd/system/*.wants/* 2>/dev/null | sed 's#.*/##' | sort -u > '$dir/enabled-units.txt'"
+    as_root sh -c "dpkg-query -W -f='\${Package}\t\${Version}\n' 'linux-image-*' > '$dir/kernels.txt' 2>/dev/null" || true
+
+    log "Checksumming..."
+    as_root sh -c "cd '$dir' && sha256sum etc.tar.gz package-versions.tsv manual-selections.txt enabled-units.txt kernels.txt > SHA256SUMS"
+    as_root sh -c "printf 'created=%s\nhostname=%s\nkernel=%s\n' '$stamp' \"\$(hostname)\" \"\$(uname -r)\" >> '$dir/SHA256SUMS'"
+    as_root du -sh "$dir"
+    log "Snapshot: $dir"
+}
+
+cmd_list() {
+    local dir dirs
+    dirs=$(snapshot_dirs)
+    if [[ -z "$dirs" ]]; then
+        log "No snapshots yet (run: samurai-recovery snapshot)"
+        return 0
+    fi
+    while IFS= read -r dir; do
+        printf '%s  %s\n' "$(basename "$dir")" "$(du -sh "$dir" 2>/dev/null | cut -f1)"
+    done <<< "$dirs"
+}
+
+cmd_verify() {
+    local dir sums
+    dir=$(pick_snapshot "${1:-}")
+    [[ -f "$dir/SHA256SUMS" ]] || die "$dir has no SHA256SUMS; it is not a complete snapshot"
+    sums=$(as_root sh -c "cd '$dir' && sha256sum -c SHA256SUMS" 2>&1) || true
+    printf '%s\n' "$sums"
+    if printf '%s\n' "$sums" | grep -Eq 'FAILED|WARNING'; then
+        die "the snapshot is damaged; do not restore from it"
+    fi
+    log "verified: $(basename "$dir")"
+}
+
+cmd_restore_etc() {
+    local dir snap="" file
+    # A first argument that is not an absolute path is a snapshot selector; the
+    # files to restore always begin with /, so the two are never ambiguous.
+    if (( $# > 0 )) && [[ "$1" != /* ]]; then
+        snap=$1
+        shift
+    fi
+    dir=$(pick_snapshot "$snap")
+    (( $# > 0 )) || die \
+        "restore-etc needs at least one file, e.g. samurai-recovery restore-etc /etc/nftables.conf
+Refusing to replace a whole /etc from a snapshot: partial damage is the common case,
+wholesale replacement is not, and the files named here are the ones you are sure about."
+    local names=()
+    for file in "$@"; do
+        if [[ "$file" != /* ]]; then
+            die "give absolute paths (/etc/...), got: $file"
+        fi
+        names+=("${file#/}")
+    done
+    cmd_verify "$dir"
+    log "Restoring into / from $(basename "$dir"):"
+    printf '  %s\n' "${names[@]}"
+    as_root tar -xzf "$dir/etc.tar.gz" -C / "${names[@]}"
+    log "Restored. Ownership and mode come from the snapshot, so review them if the file was chown'ed since."
+}
+
+cmd_restore_packages() {
+    local dir snap="" apply=0 arg added
+    for arg in "$@"; do
+        case "$arg" in
+            --apply) apply=1 ;;
+            *)
+                if [[ -n "$snap" ]]; then
+                    die "restore-packages takes one snapshot and --apply"
+                fi
+                snap=$arg
+                ;;
+        esac
+    done
+    dir=$(pick_snapshot "$snap")
+    [[ -f "$dir/package-versions.tsv" ]] || die "$dir has no package list"
+    cmd_verify "$dir"
+    added=$(comm -23 \
+        <(dpkg-query -W -f='${Package}\n' 2>/dev/null | sort) \
+        <(as_root cut -f1 "$dir/package-versions.tsv" | sort))
+    if [[ -z "$added" ]]; then
+        log "Nothing has been installed since $(basename "$dir")."
+        return 0
+    fi
+    log "Packages installed since the snapshot:"
+    # shellcheck disable=SC2086  # package names, one per line, no spaces
+    printf '  %s\n' $added
+    if ((apply == 0)); then
+        log "Re-run with --apply to remove them and their orphaned dependencies."
+        return 0
+    fi
+    # shellcheck disable=SC2086  # deliberate word splitting of the package list
+    DEBIAN_FRONTEND=noninteractive as_root apt-get remove --auto-remove -y $added \
+        || die "APT refused the removal; see the messages above"
+    log "Removed the packages added since $(basename "$dir")."
+    warn "Packages upgraded in place are not downgraded by this. Hold one across an"
+    warn "update with 'apt-mark hold <package>' before it runs."
+}
+
+cmd_prune() {
+    local dir old
+    old=$(snapshot_dirs | head -n -"$KEEP" || true)
+    if [[ -z "$old" ]]; then
+        log "Nothing to prune: keeping the newest $KEEP snapshot(s)."
+        return 0
+    fi
+    while IFS= read -r dir; do
+        if [[ -n "$dir" ]]; then
+            as_root rm -rf "$dir"
+            log "Pruned $(basename "$dir")"
+        fi
+    done <<< "$old"
+}
+
+main() {
+    local cmd=${1:-}
+    shift || true
+    case "$cmd" in
+        snapshot) cmd_snapshot "$@" ;;
+        list) cmd_list "$@" ;;
+        verify) cmd_verify "$@" ;;
+        restore-etc) cmd_restore_etc "$@" ;;
+        restore-packages) cmd_restore_packages "$@" ;;
+        prune) cmd_prune "$@" ;;
+        ""|-h|--help|help) usage ;;
+        *) die "Unknown command: $cmd (run: samurai-recovery --help)" ;;
+    esac
+}
+
+main "$@"

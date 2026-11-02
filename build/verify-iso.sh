@@ -128,6 +128,13 @@ unsquashfs -f -no-progress -d "$ROOT" "$SQUASHFS" \
     usr/local/bin/samurai-ai \
     usr/local/bin/samurai-theme \
     usr/local/bin/samurai-gaming \
+    usr/local/bin/samurai-profile \
+    usr/local/bin/samurai-recovery \
+    etc/nftables.conf \
+    etc/sudoers.d/90samurai \
+    etc/apt/preferences.d/99samurai \
+    etc/apt/apt.conf.d/20samurai-security \
+    etc/systemd/journald.conf.d/99samurai.conf \
     usr/share/color-schemes/samurai-kuro.colors \
     usr/share/color-schemes/samurai-shiro.colors \
     usr/share/applications/calamares-install-debian.desktop \
@@ -160,6 +167,13 @@ assert_file usr/bin/rsync
 assert_file usr/local/bin/samurai-ai
 assert_file usr/local/bin/samurai-theme
 assert_file usr/local/bin/samurai-gaming
+assert_file usr/local/bin/samurai-profile
+assert_file usr/local/bin/samurai-recovery
+assert_file etc/nftables.conf
+assert_file etc/sudoers.d/90samurai
+assert_file etc/apt/preferences.d/99samurai
+assert_file etc/apt/apt.conf.d/20samurai-security
+assert_file etc/systemd/journald.conf.d/99samurai.conf
 assert_file usr/share/color-schemes/samurai-kuro.colors
 assert_file usr/share/color-schemes/samurai-shiro.colors
 assert_file usr/share/applications/calamares-install-debian.desktop
@@ -244,5 +258,99 @@ assert_contains var/lib/dpkg/status '^Package: efibootmgr$'
 assert_contains var/lib/dpkg/status '^Package: squashfs-tools$'
 assert_contains var/lib/dpkg/status '^Package: rsync$'
 assert_contains var/lib/dpkg/status '^Package: cryptsetup$'
+
+log "Checking the shipped security policy"
+assert_contains etc/nftables.conf '^table inet samurai'
+assert_contains etc/nftables.conf 'type filter hook input priority 0; policy drop'
+assert_contains etc/nftables.conf 'chain ingress_exceptions'
+assert_contains etc/sudoers.d/90samurai '^Defaults[[:space:]]env_reset$'
+assert_contains etc/apt/preferences.d/99samurai '^Pin-Priority: 600$'
+assert_contains etc/apt/apt.conf.d/20samurai-security 'APT::Periodic::Unattended-Upgrade "1"'
+assert_contains etc/apt/apt.conf.d/20samurai-security '"Debian:trixie-security"'
+assert_contains etc/systemd/journald.conf.d/99samurai.conf '^Storage=persistent$'
+assert_contains usr/local/bin/samurai-profile '^profile_packages\(\) \{$'
+assert_contains usr/local/bin/samurai-recovery '^cmd_snapshot\(\) \{$'
+
+# Unattended upgrades are only real if an archive exists to upgrade from, and
+# 0120-security.hook.chroot is supposed to have guaranteed that at build time.
+# Checked per file, because /etc/apt as a whole would also match the pin in
+# preferences.d, which proves nothing about a configured source.
+unsquashfs -f -no-progress -d "$ROOT" etc/apt/sources.list >/dev/null 2>&1 || true
+unsquashfs -f -no-progress -d "$ROOT" etc/apt/sources.list.d >/dev/null 2>&1 || true
+sources_found=0
+for source in "$ROOT/etc/apt/sources.list" "$ROOT/etc/apt/sources.list.d"/*.list \
+    "$ROOT/etc/apt/sources.list.d"/*.sources; do
+    [[ -e "$source" ]] || continue
+    if grep -q 'trixie-security' "$source"; then
+        sources_found=1
+    fi
+done
+if ((sources_found == 0)); then
+    die "the image configures no Debian security archive to update from"
+fi
+
+log "Checking the permissions the image records for those files"
+# Read from the squashfs metadata rather than an extraction: extracting as a
+# non-root user rewrites ownership, and sudo ignores a group-writable sudoers
+# drop-in while nft refuses to read a group-writable configuration, so a wrong
+# mode is a security policy that is present and silently not applied.
+unsquashfs -lm "$SQUASHFS" > "$TMP_DIR/squashfs-listing.txt"
+assert_image_mode() {
+    local path=$1 expect=$2 found
+    found=$(awk -v p="$path" '{ name = $NF; sub(/^\./, "", name)
+        if (name == p) { print $1, $2; exit } }' "$TMP_DIR/squashfs-listing.txt")
+    [[ -n "$found" ]] || die "/$path is not in the squashfs metadata"
+    if [[ "$found" != "$expect" ]]; then
+        die "/$path is recorded as '$found', expected '$expect'"
+    fi
+}
+assert_image_mode etc/sudoers.d/90samurai '-rw-r----- root/root'
+assert_image_mode etc/nftables.conf '-rw-r--r-- root/root'
+assert_image_mode etc/apt/preferences.d/99samurai '-rw-r--r-- root/root'
+assert_image_mode etc/apt/apt.conf.d/20samurai-security '-rw-r--r-- root/root'
+assert_image_mode usr/local/bin/samurai-profile '-rwxr-xr-x root/root'
+assert_image_mode usr/local/bin/samurai-recovery '-rwxr-xr-x root/root'
+
+log "Writing and validating the release package manifest"
+TAB=$'	'  # the manifest separator; a literal tab is too easy to lose in an edit
+# Version tracking for one build: the exact package set the ISO carries, which is
+# what a vulnerability triage or a bug report needs to be able to name.
+MANIFEST="${ISO%.iso}.packages.tsv"
+awk '
+    /^Package: / { package = substr($0, 10) }
+    /^Version: / { version = substr($0, 10) }
+    /^Architecture: / { architecture = substr($0, 15) }
+    /^Status: / { installed = ($0 == "Status: install ok installed") }
+    /^$/ {
+        if (package != "" && installed) printf "%s\t%s\t%s\n", package, version, architecture
+        package = ""; version = ""; architecture = ""; installed = 0
+    }
+    END { if (package != "" && installed) printf "%s\t%s\t%s\n", package, version, architecture }
+' "$ROOT/var/lib/dpkg/status" | sort > "$MANIFEST"
+[[ -s "$MANIFEST" ]] || die "the manifest is empty: dpkg status produced nothing"
+if awk -F'\t' 'NF != 3 { bad = 1 } END { exit bad }' "$MANIFEST"; then
+    die "the manifest has a line without package, version and architecture"
+fi
+manifest_count=$(wc -l < "$MANIFEST")
+if ((manifest_count < 400)); then
+    die "the manifest lists only $manifest_count packages; a Plasma system has far more"
+fi
+log "Manifest: $MANIFEST ($manifest_count installed packages)"
+for package in plasma-desktop sddm linux-image-amd64 nftables apparmor \
+    unattended-upgrades libgl1-mesa-dri mesa-vulkan-drivers mangohud gamemode calamares; do
+    if ! grep -q "^${package}${TAB}" "$MANIFEST"; then
+        die "the manifest does not contain $package"
+    fi
+done
+
+# Everything the package lists declare must be in the image. live-build would
+# have failed on an unfetchable name, so this catches the quieter mistake: a list
+# that was trimmed, or a package that stopped being installed and nobody noticed.
+while IFS= read -r package; do
+    [[ -n "$package" ]] || continue
+    if ! grep -q "^${package}${TAB}" "$MANIFEST"; then
+        die "$package is declared in samurai.list.chroot but absent from the image"
+    fi
+done < <(grep -Ev '^[[:space:]]*(#|$)' "$REPO_ROOT/build/config/package-lists/samurai.list.chroot")
 
 log "ISO verification passed"

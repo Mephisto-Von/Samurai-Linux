@@ -180,7 +180,8 @@ grep -q '"console=ttyS0,115200n8"' "$REPO_ROOT/build/install-test.py" \
 grep -q 'uses: ./.github/workflows/install-test.yml' "$REPO_ROOT/.github/workflows/build-iso-hosted.yml" \
     || fail "the hosted ISO build does not run the install test"
 if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    for hook in 0110-branding.hook.chroot 0200-branding.hook.binary; do
+    for hook in 0110-branding.hook.chroot 0200-branding.hook.binary \
+        0120-security.hook.chroot 0130-profiles.hook.chroot; do
         if git -C "$REPO_ROOT" check-ignore -q "build/config/hooks/normal/$hook"; then
             fail "build/config/hooks/normal/$hook is ignored by git"
         fi
@@ -202,6 +203,93 @@ chmod 0755 "$TMP/bin/steam"
 out=$(PATH="$TMP/bin:$PATH" HOME="$HOME_DIR" bash "$REPO_ROOT/samurai/scripts/samurai-gaming" steam --foo)
 [[ "$out" == "steam-args:--foo" ]] || fail "steam launcher passed the wrong args: $out"
 ok "gaming launcher forwards only user arguments"
+
+# 6b. Developer profiles name real packages and refuse to guess
+PROFILE_NAMES=(c python web rust go java databases containers docker virtualization debug ml)
+profile_list=$(bash "$REPO_ROOT/samurai/scripts/samurai-profile" list)
+for expected in "${PROFILE_NAMES[@]}"; do
+    assert_contains "$profile_list" "$expected" "profile list"
+done
+for profile in "${PROFILE_NAMES[@]}"; do
+    # ml deliberately has no apt set; every other profile must resolve to names.
+    if [[ "$profile" == ml ]]; then
+        continue
+    fi
+    names=$(bash "$REPO_ROOT/samurai/scripts/samurai-profile" packages "$profile")
+    [[ -n "$names" ]] || fail "profile $profile declares no packages"
+done
+if bash "$REPO_ROOT/samurai/scripts/samurai-profile" packages nonexistent >/dev/null 2>&1; then
+    fail "samurai-profile accepted an unknown profile"
+fi
+bash "$REPO_ROOT/samurai/scripts/samurai-profile" show ml | grep -q 'venv' \
+    || fail "the ml profile does not describe how to get a working environment"
+ok "developer profiles declare packages or explain why they do not"
+
+# 6c. Recovery refuses to replace a whole /etc
+mkdir -p "$TMP/rec/2026-01-01T000000Z"
+if SAMURAI_RECOVERY_STORE="$TMP/rec" \
+    bash "$REPO_ROOT/samurai/scripts/samurai-recovery" restore-etc 2026-01-01T000000Z >/dev/null 2>&1; then
+    fail "restore-etc accepted a request to restore with no files named"
+fi
+if SAMURAI_RECOVERY_STORE="$TMP/rec" \
+    bash "$REPO_ROOT/samurai/scripts/samurai-recovery" restore-etc 2026-01-01T000000Z etc/passwd >/dev/null 2>&1; then
+    fail "restore-etc accepted a relative path"
+fi
+SAMURAI_RECOVERY_STORE="$TMP/rec" bash "$REPO_ROOT/samurai/scripts/samurai-recovery" --help | grep -q 'restore-packages' \
+    || fail "samurai-recovery does not document package rollback"
+ok "recovery commands fail closed on ambiguous input"
+
+# 6d. The profile build hook resolves every profile against the archive
+hook="$REPO_ROOT/build/config/hooks/normal/0130-profiles.hook.chroot"
+assert_file "$hook"
+grep -q 'samurai-profile' "$hook" || fail "the profile hook does not use samurai-profile"
+grep -q -- '-s --no-install-recommends' "$hook" \
+    || fail "the profile hook does not simulate the install instead of performing it"
+grep -q 'usr/local/bin/samurai-profile' "$REPO_ROOT/build/verify-iso.sh" \
+    || fail "ISO verification does not check that samurai-profile ships in the image"
+grep -q 'usr/local/bin/samurai-recovery' "$REPO_ROOT/build/verify-iso.sh" \
+    || fail "ISO verification does not check that samurai-recovery ships in the image"
+ok "every shipped profile is resolver-tested at build time"
+
+# 6e. The security policy ships as configured state, and both gates read it back
+assert_file "$REPO_ROOT/build/config/hooks/normal/0120-security.hook.chroot"
+for policy in \
+    etc/nftables.conf \
+    etc/sudoers.d/90samurai \
+    etc/apt/preferences.d/99samurai \
+    etc/apt/apt.conf.d/20samurai-security \
+    etc/systemd/journald.conf.d/99samurai.conf; do
+    assert_file "$REPO_ROOT/build/config/includes.chroot/$policy"
+    grep -qF "$policy" "$REPO_ROOT/build/verify-iso.sh" \
+        || fail "ISO verification does not check /$policy"
+done
+grep -q 'table inet' "$REPO_ROOT/build/config/includes.chroot/etc/nftables.conf" \
+    || fail "the firewall filters only one address family"
+grep -q 'policy drop' "$REPO_ROOT/build/config/includes.chroot/etc/nftables.conf" \
+    || fail "the firewall does not default-drop inbound traffic"
+if grep -Ev '^[[:space:]]*#' "$REPO_ROOT/build/config/includes.chroot/etc/sudoers.d/90samurai" |
+    grep -q 'NOPASSWD'; then
+    fail "the shipped sudoers fragment grants passwordless root"
+fi
+# The image rebrands DISTRIB_ID, so Debian's "${distro_id}-based Allowed-Origins
+# matches nothing here. The origin has to be named literally and asserted again
+# after install, or automatic upgrades are configured, enabled and inert.
+grep -q '"Debian:trixie-security"' \
+    "$REPO_ROOT/build/config/includes.chroot/etc/apt/apt.conf.d/20samurai-security" \
+    || fail "20samurai-security names no literal security origin"
+grep -q 'Debian:trixie-security' "$REPO_ROOT/build/install-test.py" \
+    || fail "the install test no longer asserts the security origin the image names"
+# The hook must derive the origin from the archive metadata rather than trust
+# either side of that pair to still be true.
+grep -qF '/^Origin: /' "$REPO_ROOT/build/config/hooks/normal/0120-security.hook.chroot" \
+    || fail "the security hook no longer reads the archive's own Origin field"
+for gate in nftables apparmor apt-daily-upgrade.timer NOPASSWD; do
+    grep -q "$gate" "$REPO_ROOT/build/install-test.py" \
+        || fail "the install test does not verify $gate on the installed system"
+done
+grep -q 'packages.tsv' "$REPO_ROOT/build/verify-iso.sh" \
+    || fail "ISO verification does not produce the installed-package manifest"
+ok "security defaults are configured in the image and verified after install"
 
 # 7. Post-build helpers fail clearly without arguments
 if bash "$REPO_ROOT/scripts/analyze-iso.sh" >/dev/null 2>&1; then

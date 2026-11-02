@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+# Samurai developer profile manager.
+#
+# The image ships a lean core toolchain (git, gcc, make, cmake, ninja, python3,
+# build-essential). Everything else is a deliberate, recorded choice: this script
+# asks APT to resolve a profile before it installs it, keeps a manifest of what
+# the profile put on the system, and can take it back out again.
+#
+# It is not a package manager. dpkg owns file ownership and the installed
+# database; APT owns dependency resolution and conflicts. What this adds is the
+# profile boundary: which packages belong to which decision, and a way to undo
+# one without guessing.
+set -euo pipefail
+
+STATE_DIR=${SAMURAI_PROFILE_STATE:-/var/lib/samurai/profiles}
+
+log() { printf '%s\n' "$*"; }
+warn() { printf 'Warning: %s\n' "$*" >&2; }
+die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+
+as_root() {
+    if ((EUID == 0)); then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        die "Root privileges are required and sudo is not available"
+    fi
+}
+
+usage() {
+    cat <<'EOF'
+Samurai developer profiles
+
+Usage: samurai-profile <command> [profile]
+
+Commands:
+  list                 Show the available profiles
+  show <profile>       Describe a profile and list its packages
+  packages <profile>   Print only the profile's package names (for scripts)
+  plan <profile>       Ask APT what installing it would do, change nothing
+  install <profile>    Install it and record a manifest
+  installed            Show recorded profiles and whether they are complete
+  remove <profile>     Remove a recorded profile and its now-unused dependencies
+EOF
+}
+
+ml_guidance() {
+    cat <<'EOF'
+ml has no package list on purpose. PyTorch and TensorFlow are gigabytes of
+prebuilt wheels that change faster than a release archive, and Debian's
+python3-torch is not the build a GPU expects. The supported path is an isolated
+environment, which keeps a broken ML install from touching the system Python:
+
+    python3 -m venv ~/venv/ml
+    ~/venv/ml/bin/pip install --upgrade pip
+    ~/venv/ml/bin/pip install torch          # CPU wheels
+    ~/venv/ml/bin/pip install --index-url https://download.pytorch.org/whl/cu124 torch
+
+For an AMD GPU use ROCm's own index, and check the driver first: samurai-ai
+hardware reports the GPU and the memory a model would need.
+EOF
+}
+
+profile_names() {
+    printf '%s\n' c python web rust go java databases containers docker \
+        virtualization debug ml
+}
+
+profile_summary() {
+    case "$1" in
+        c) printf 'clang, lldb, ccache and pkg-config alongside the shipped GCC\n' ;;
+        python) printf 'dev headers, pip, venv, pipx and tox\n' ;;
+        web) printf 'Node.js and npm\n' ;;
+        rust) printf 'rustc and cargo\n' ;;
+        go) printf 'the Go toolchain\n' ;;
+        java) printf 'the default JDK\n' ;;
+        databases) printf 'PostgreSQL, MariaDB, Redis and SQLite servers for local work\n' ;;
+        containers) printf 'rootless Podman with its networking helpers\n' ;;
+        docker) printf 'the Docker daemon (kept apart from Podman deliberately)\n' ;;
+        virtualization) printf 'QEMU/KVM, libvirt and virt-manager\n' ;;
+        debug) printf 'gdb, valgrind, strace, ltrace and elfutils\n' ;;
+        ml) printf 'no apt set: see samurai-profile show ml\n' ;;
+    esac
+}
+
+profile_packages() {
+    case "$1" in
+        c) printf '%s\n' clang lldb ccache pkg-config ;;
+        python) printf '%s\n' python3-dev python3-pip python3-venv pipx tox ;;
+        web) printf '%s\n' nodejs npm ;;
+        rust) printf '%s\n' rustc cargo ;;
+        go) printf '%s\n' golang-go ;;
+        java) printf '%s\n' default-jdk ;;
+        databases) printf '%s\n' postgresql mariadb-server redis-server sqlite3 ;;
+        containers) printf '%s\n' podman slirp4netns fuse-overlayfs ;;
+        docker) printf '%s\n' docker.io ;;
+        virtualization) printf '%s\n' qemu-system-x86 qemu-utils qemu-block-extra \
+            libvirt-daemon-system libvirt-clients virt-manager ;;
+        debug) printf '%s\n' gdb valgrind strace ltrace elfutils ;;
+        ml) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+require_profile() {
+    local name="$1"
+    profile_packages "$name" >/dev/null 2>&1 || die "Unknown profile: $name (run: samurai-profile list)"
+}
+
+cmd_list() {
+    local name
+    while IFS= read -r name; do
+        printf '%-15s %s\n' "$name" "$(profile_summary "$name")"
+    done < <(profile_names)
+}
+
+cmd_show() {
+    local name="$1"
+    require_profile "$name"
+    printf '%s: %s\n\n' "$name" "$(profile_summary "$name")"
+    if [[ "$name" == ml ]]; then
+        ml_guidance
+        return 0
+    fi
+    log "Packages:"
+    profile_packages "$name" | sed 's/^/  /'
+    if [[ -f "$STATE_DIR/$name.records" ]]; then
+        log "\nRecorded as installed from $STATE_DIR/$name.records"
+    fi
+}
+
+cmd_plan() {
+    local name="$1" packages
+    require_profile "$name"
+    packages=$(profile_packages "$name")
+    [[ -n "$packages" ]] || { log "$name installs no apt packages"; return 0; }
+    command -v apt-get >/dev/null 2>&1 || die "apt-get not found"
+    log "Simulating: apt-get install --no-install-recommends $packages"
+    # -s is APT's own resolver with the downloads and the database untouched, so
+    # conflicts and missing dependencies are reported here instead of half-way
+    # through an install.
+    # shellcheck disable=SC2086  # deliberate word splitting of the package list
+    apt-get install -y -s --no-install-recommends $packages || die \
+        "APT could not plan profile '$name' above; run 'samurai-profile show $name' to see what it asks for"
+}
+
+record_install() {
+    local name="$1" package line status version
+    mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
+    : > "$STATE_DIR/$name.records.tmp"
+    while IFS= read -r package; do
+        # ${db:Status-Abbrev} rather than a grep on prose: "ii " is what dpkg
+        # says a genuinely configured package looks like, and an available but
+        # uninstalled package has no status to read at all.
+        line=$(dpkg-query -W -f='${db:Status-Abbrev}\t${Version}\n' "$package" 2>/dev/null) || line=""
+        status=${line%%$'\t'*}
+        version=${line#*$'\t'}
+        if [[ "${status:0:2}" != "ii" ]]; then
+            warn "$package of profile '$name' is not installed; it is not recorded"
+            continue
+        fi
+        printf '%s\t%s\n' "$package" "$version" >> "$STATE_DIR/$name.records.tmp"
+    done < <(profile_packages "$name")
+    mv "$STATE_DIR/$name.records.tmp" "$STATE_DIR/$name.records"
+}
+
+cmd_install() {
+    local name="$1" packages
+    require_profile "$name"
+    packages=$(profile_packages "$name")
+    [[ -n "$packages" ]] || { ml_guidance; return 0; }
+    command -v apt-get >/dev/null 2>&1 || die "apt-get not found"
+    # shellcheck disable=SC2086  # deliberate word splitting of the package list
+    DEBIAN_FRONTEND=noninteractive as_root apt-get install -y --no-install-recommends $packages \
+        || die "APT refused or failed to install profile '$name'; see the messages above"    record_install "$name"
+    log "Profile '$name' installed; manifest: $STATE_DIR/$name.records"
+}
+
+cmd_installed() {
+    local file name missing package shown=0
+    [[ -d "$STATE_DIR" ]] || { log "No profiles have been installed on this system."; return 0; }
+    for file in "$STATE_DIR"/*.records; do
+        [[ -f "$file" ]] || continue
+        shown=1
+        name=$(basename "$file" .records)
+        missing=""
+        while IFS=$'\t' read -r package _version; do
+            dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' \
+                || missing+="$package "
+        done < "$file"
+        if [[ -z "$missing" ]]; then
+            printf '%-15s complete\n' "$name"
+        else
+            printf '%-15s incomplete, missing: %s\n' "$name" "$missing"
+        fi
+    done
+    ((shown)) || log "No profiles have been installed on this system."
+}
+
+cmd_remove() {
+    local name="$1" packages
+    require_profile "$name"
+    [[ -f "$STATE_DIR/$name.records" ]] \
+        || die "No manifest for '$name'; nothing was recorded as installed by this profile"
+    packages=$(cut -f1 "$STATE_DIR/$name.records")
+    [[ -n "$packages" ]] || { log "$name has no recorded packages"; return 0; }
+    # --auto-remove lets APT decide which dependencies are orphaned, rather than
+    # deleting whatever this script happens to think belonged to the profile.
+    # shellcheck disable=SC2086  # deliberate word splitting of the package list
+    DEBIAN_FRONTEND=noninteractive as_root apt-get remove --auto-remove -y $packages \
+        || die "APT refused to remove profile '$name'; see the messages above"
+    rm -f "$STATE_DIR/$name.records"
+    log "Removed profile '$name' and its orphaned dependencies"
+}
+
+main() {
+    local cmd=${1:-}
+    shift || true
+    case "$cmd" in
+        list) (( $# == 0 )) || die "list takes no arguments"; cmd_list ;;
+        packages|show|plan|install|remove)
+            (( $# == 1 )) || die "$cmd needs exactly one profile name"
+            case "$cmd" in
+                packages) require_profile "$1" && profile_packages "$1" ;;
+                show) cmd_show "$1" ;;
+                plan) cmd_plan "$1" ;;
+                install) cmd_install "$1" ;;
+                remove) cmd_remove "$1" ;;
+            esac
+            ;;
+        installed) (( $# == 0 )) || die "installed takes no arguments"; cmd_installed ;;
+        ""|-h|--help|help) usage ;;
+        *) die "Unknown command: $cmd (run: samurai-profile --help)" ;;
+    esac
+}
+
+main "$@"

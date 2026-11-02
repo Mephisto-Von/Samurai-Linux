@@ -1,0 +1,32 @@
+#!/bin/sh
+# Resolve every developer profile against the real archive before shipping.
+#
+# samurai-profile hands its package lists to APT, so a name that does not exist
+# in trixie would only surface on a user's machine, part-way through an install,
+# as "Unable to locate package". Simulation runs APT's own resolver with the
+# database and the downloads untouched, which is also the dependency-resolution
+# and conflict check the testing requirements ask for.
+#
+# This hook must run after 0120-security.hook.chroot: that one refreshes the
+# package lists this one resolves against.
+set -eu
+
+fail() {
+	echo "profile hook: $*" >&2
+	exit 1
+}
+
+command -v samurai-profile >/dev/null 2>&1 \
+	|| fail "samurai-profile is not installed in the image (check build/build.sh sync_assets)"
+
+resolved=0
+for profile in $(samurai-profile list | awk '{print $1}'); do
+	packages=$(samurai-profile packages "$profile")
+	# ml deliberately has no apt set: see 'samurai-profile show ml'.
+	[ -n "$packages" ] || continue
+	printf '%s\n' "$packages" | xargs -r apt-get install -y -s --no-install-recommends >/dev/null \
+		|| fail "profile '$profile' cannot be resolved against the configured archives"
+	resolved=$((resolved + 1))
+done
+
+echo "profile hook: resolved $resolved developer profiles against the archive"
