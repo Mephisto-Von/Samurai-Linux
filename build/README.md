@@ -186,8 +186,11 @@ the same name, so keep an offline backup of `.tools/samurai-signing-key.asc`,
 No install-test run has been green end to end yet, so there is no tag and no
 published release. Each dispatch has reached further than the previous one - the
 failures have moved from the live session, to partitioning, to the bootloader, to
-the sudo prompt on the installed system, and most recently to the security
-policy that `unattended-upgrades` was configured with. The suite now also reads
+the sudo prompt on the installed system, and the last two stopped before the
+installer even ran: `build/verify-iso.sh` refused to publish an image whose
+shipped `sources.list` configured no Debian security archive, which would have
+made every automatic-update claim inert. Runs 41447034423 and 41452920694 caught
+that; the fix is in `build/auto/config`. The suite now also reads
 back the installed security state, exercises `samurai-profile` and
 `samurai-recovery` on the installed system, and runs
 `build/measure-performance.sh` inside a live Plasma session when `--desktop` is
