@@ -94,26 +94,30 @@ main() {
     section "startup"
 
     local analyze boot_kernel boot_userspace slow enabled running
-    analyze=$(run 'systemd-analyze')
+    # Explicitly the system manager: this harness is run inside the desktop
+    # session as an ordinary user, and systemd defaults to the *user* manager
+    # there. Boot time and unit counts of the user session would be real numbers
+    # about the wrong thing, which is the mistake this file exists to prevent.
+    analyze=$(run 'systemd-analyze --system')
     boot_kernel=$(printf '%s' "$analyze" | grep -Eo '[0-9.]+(ms|s) *\(kernel\)' | tr -dc '0-9.' || true)
     boot_userspace=$(printf '%s' "$analyze" | grep -Eo '[0-9.]+(ms|s) *\(userspace\)' | tr -dc '0-9.' || true)
     if [[ -n "$analyze" ]]; then
-        text "startup" "$(printf '%s' "$analyze" | tr '\n' ' ')" 'systemd-analyze'
+        text "startup" "$(printf '%s' "$analyze" | tr '\n' ' ')" 'systemd-analyze --system'
     else
-        text "startup" 'unavailable (systemd-analyze produced no output)' 'systemd-analyze'
+        text "startup" 'unavailable (systemd-analyze produced no output)' 'systemd-analyze --system'
     fi
-    metric "boot_kernel" "${boot_kernel:-unavailable}" 's' 'systemd-analyze | grep "(kernel)"'
-    metric "boot_userspace" "${boot_userspace:-unavailable}" 's' 'systemd-analyze | grep "(userspace)"'
+    metric "boot_kernel" "${boot_kernel:-unavailable}" 's' 'systemd-analyze --system | grep "(kernel)"'
+    metric "boot_userspace" "${boot_userspace:-unavailable}" 's' 'systemd-analyze --system | grep "(userspace)"'
 
-    slow=$(run 'systemd-analyze blame | head -n 5')
-    [[ -n "$slow" ]] && text "slowest units" "$(printf '%s' "$slow" | tr '\n' '; ')" 'systemd-analyze blame | head -5'
+    slow=$(run 'systemd-analyze --system blame | head -n 5')
+    [[ -n "$slow" ]] && text "slowest units" "$(printf '%s' "$slow" | tr '\n' '; ')" 'systemd-analyze --system blame | head -5'
 
     # These counts are what "minimal services" has to mean: a number that can be
     # compared between releases, not an adjective.
-    enabled=$(run 'systemctl list-unit-files --state=enabled --no-legend | grep -c .')
-    running=$(run 'systemctl list-units --type=service --state=running --no-legend | grep -c .')
-    metric "units_enabled" "${enabled:-unavailable}" 'units' 'systemctl list-unit-files --state=enabled | grep -c .'
-    metric "services_running" "${running:-unavailable}" 'units' 'systemctl list-units --type=service --state=running | grep -c .'
+    enabled=$(run 'systemctl --system list-unit-files --state=enabled --no-legend | grep -c .')
+    running=$(run 'systemctl --system list-units --type=service --state=running --no-legend | grep -c .')
+    metric "units_enabled" "${enabled:-unavailable}" 'units' 'systemctl --system list-unit-files --state=enabled | grep -c .'
+    metric "services_running" "${running:-unavailable}" 'units' 'systemctl --system list-units --type=service --state=running | grep -c .'
 
     section "at rest"
 
