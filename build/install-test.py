@@ -1097,7 +1097,26 @@ class InstallerTest:
             ),
             ("apt-config dump APT::Periodic::Unattended-Upgrade 2>&1", "unattended upgrades"),
             ("apt-config dump Unattended-Upgrade::Allowed-Origins 2>&1", "upgrade origins"),
-            ("apt-cache policy 2>&1 | grep -c 'n=trixie-security'", "security archive"),
+            # The archive is configured in files the installed system boots with.
+            # apt-cache policy is not the test here: it only lists archives apt
+            # has already downloaded an index for, and this VM runs with no
+            # network at all, so an empty list would say nothing about the policy.
+            (
+                "cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list "
+                "/etc/apt/sources.list.d/*.sources 2>/dev/null | grep -v '^[[:space:]]*#'",
+                "apt sources",
+            ),
+            (
+                "dpkg-query -W -f='${Package} ${db:Status-Abbrev} ${Version}\\n' "
+                "unattended-upgrades 2>&1",
+                "updater package",
+            ),
+            (
+                "timeout 45 unattended-upgrades --dry-run --debug 2>&1 | head -n 60",
+                "updater dry run",
+            ),
+            ("ls /var/lib/apt/lists 2>/dev/null | wc -l", "package indexes"),
+            ("ls /etc/apt/apt.conf.d/ 2>&1 | head -n 30", "apt configuration files"),
             ("ls /var/log/journal 2>&1 | head -n 3", "journal storage"),
             ("stat -c '%a %U' /etc/sudoers.d/90samurai /etc/nftables.conf 2>&1", "policy file modes"),
             (
@@ -1191,14 +1210,30 @@ class InstallerTest:
                 "automatic security upgrades are switched off in the installed system: "
                 f"{values.get('unattended upgrades')!r}"
             )
-        # The switch above is worthless if no archive is allowed to upgrade, and
-        # Debian's default list is what decides that, so read the effective value.
+        # The switch above is worthless if no archive is allowed to upgrade from.
+        # Two independent halves: the archive has to be configured, and the
+        # origin the updater is told to accept has to name it. Debian's default
+        # origin list is built from "${distro_id}", which this project's own
+        # branding rewrites to Samurai, so an origin list copied from Debian
+        # would match nothing here and would still look perfectly configured.
+        sources = values.get("apt sources", "")
+        if "trixie-security" not in sources:
+            raise Failure(f"the installed system configures no Debian security archive:\n{sources}")
+        if "unattended-upgrades ii" not in values.get("updater package", ""):
+            raise Failure(
+                "the installed system does not have the unattended-upgrades package: "
+                f"{values.get('updater package')!r}"
+            )
         origins = values.get("upgrade origins", "")
         if "security" not in origins:
-            raise Failure(f"unattended upgrades are enabled for no security archive: {origins!r}")
-        if not values.get("security archive", "").strip().isdigit() or values.get("security archive", "0") == "0":
-            raise Failure("the installed system cannot reach the Debian security archive to update from")
-        self.log("unattended security upgrades are enabled for a security origin")
+            raise Failure(f"unattended upgrades are enabled for no security origin: {origins!r}")
+        if "Debian:trixie-security" not in origins:
+            raise Failure(f"the effective Allowed-Origins does not name the security archive: {origins!r}")
+        # Reported, not asserted: the updater cannot build its cache without any
+        # downloaded index, and this VM has no network by design, so a dry run
+        # here measures how far the mechanism gets, not whether it can patch.
+        self.log(f"package indexes in the installed system: {values.get('package indexes', '').strip()}")
+        self.log("unattended security upgrades name Debian:trixie-security as an allowed origin")
 
         # journald only keeps a journal on disk once it has created its
         # machine-id directory, so the directory is the proof Storage=persistent

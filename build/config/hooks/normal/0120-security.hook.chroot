@@ -47,22 +47,39 @@ chmod 0755 /etc/nftables.d
 
 # live-build writes the image's sources.list from the mirrors it fetched, and
 # whether the security pocket survived depends on its defaults. Do not assume:
-# authenticate what is configured first, and only add the pocket if it is
-# genuinely missing, so a configured archive is never duplicated.
+# look at the files the installed system will inherit, and add the pocket only
+# if none of them configures it, so a configured archive is never duplicated.
 # Only main is requested: the security archive's non-free components are not
 # consistently published, and a 404 there would break every future update.
-apt-get update -o APT::Acquire::Retries=3 \
-	|| fail "apt could not update from the configured archives (an unsigned or unreachable one is fatal here)"
-if ! apt-cache policy | grep -q 'n=trixie-security'; then
+if ! grep -Rqs 'trixie-security' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
 	printf 'deb http://deb.debian.org/debian-security trixie-security main\n' \
 		> /etc/apt/sources.list.d/samurai-security.list
 	chown root:root /etc/apt/sources.list.d/samurai-security.list
 	chmod 0644 /etc/apt/sources.list.d/samurai-security.list
-	apt-get update -o APT::Acquire::Retries=3 \
-		|| fail "the Debian security archive was added but could not be authenticated"
 fi
+apt-get update -o APT::Acquire::Retries=3 \
+	|| fail "apt could not update from the configured archives (an unsigned or unreachable one is fatal here)"
 apt-cache policy | grep -q 'n=trixie-security' \
 	|| fail "the installed system would have no Debian security archive to update from"
+
+# --- the automatic updater must be pointed at that archive by name ------------
+
+# unattended-upgrades matches upgrades against Allowed-Origins as
+# "Origin:Suite", and the "${distro_id}" it would substitute is this project's
+# own lsb-release value, which says Samurai and matches no Debian archive. So
+# 20samurai-security names the Origin literally, and the only honest way to
+# check that literal is to read it back from the Release file apt just
+# authenticated above. If Debian changes the field, the build fails here instead
+# of shipping a machine that never applies a security update.
+security_release=$(find /var/lib/apt/lists -maxdepth 1 \
+	-name '*trixie-security*Release' -print 2>/dev/null | sort | head -n 1)
+[ -n "$security_release" ] || fail "apt fetched no Release file for trixie-security"
+security_origin=$(awk -F': *' '/^Origin: /{ print $2; exit }' "$security_release")
+[ -n "$security_origin" ] || fail "$security_release carries no Origin field"
+grep -q "\"$security_origin:trixie-security\"" /etc/apt/apt.conf.d/20samurai-security \
+	|| fail "the security archive's Origin is '$security_origin', but 20samurai-security allows no such origin: unattended upgrades would match nothing"
+apt-config dump Unattended-Upgrade::Allowed-Origins 2>&1 | grep -q 'security' \
+	|| fail "apt reads no Allowed-Origins entry naming the security archive"
 
 # --- the units that make the configuration live -----------------------------
 

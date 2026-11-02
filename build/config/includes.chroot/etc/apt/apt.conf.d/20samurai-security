@@ -1,10 +1,16 @@
 // Samurai Linux automatic security update behaviour.
 //
-// Which archives may be upgraded without asking is Debian's own decision in
-// /etc/apt/apt.conf.d/50unattended-upgrades; this file does not fight it. What
-// it fixes is how the upgrade behaves, because the defaults are aimed at
-// servers:
-//
+//   Allowed-Origins - Debian's own 50unattended-upgrades decides which archives
+//   may be upgraded without asking, and it decides with "${distro_id}:
+//   ${distro_codename}-security". distro_id comes from lsb-release, and this
+//   project rebrands lsb-release (DISTRIB_ID=Samurai), so the substitution
+//   yields "Samurai:trixie-security" - an origin no Debian Release file has ever
+//   carried. Debian's default therefore matches nothing here, and an origin list
+//   that matches nothing means no package is ever upgraded, however correctly
+//   the timers are wired. The Origin field below is the literal one from the
+//   security archive's Release file, and 0120-security.hook.chroot fails the
+//   build if it stops matching, so a Debian metadata change cannot silently
+//   disable updates again.
 //   Automatic-Reboot false - a workstation must not reboot out from under an
 //   unwritten file. Patched services are restarted, the machine is not.
 //   Remove-Unused-Dependencies true - orphaned libraries would otherwise
@@ -13,8 +19,15 @@
 //   them unset the timers fire and do nothing, which is the classic way to
 //   install unattended-upgrades and still never receive a patch.
 //
+// APT appends list values across apt.conf.d files, so Debian's own entries stay;
+// they resolve to an origin that does not exist and simply never match anything.
+//
 // install-test.py asserts these values, plus the effective Allowed-Origins, on
 // an installed system rather than trusting that the package was pulled in.
+
+Unattended-Upgrade::Allowed-Origins {
+    "Debian:trixie-security";
+};
 
 Unattended-Upgrade::Automatic-Reboot "false";
 Unattended-Upgrade::Remove-Unused-Dependencies "true";

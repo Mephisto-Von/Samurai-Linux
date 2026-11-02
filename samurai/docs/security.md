@@ -14,8 +14,8 @@ it were missing or malformed, but no installed-system check reads it yet.
 | sudo behaviour (`env_reset`, 5-minute ticket, 3 tries) | implemented | `visudo -c` in `0120-security.hook.chroot`; file must be `0440 root` or the build fails |
 | Default-deny inbound firewall (IPv4 **and** IPv6) | tested | `systemctl is-enabled nftables` and `nft list table inet samurai` must show `chain ingress` with `policy drop` |
 | Mandatory access control (AppArmor) | partly tested | kernel parameter must be `Y` and at least one profile must be loaded; enforce/complain counts are recorded, not asserted |
-| Automatic security upgrades | tested | `APT::Periodic::Unattended-Upgrade` must be `"1"`, both apt timers must be `enabled`, and `Allowed-Origins` must include a security origin |
-| Authenticated package sources | tested at build time | `0120-security.hook.chroot` aborts the build unless `apt-get update` authenticates a `trixie-security` archive; the installed system must still show it in `apt-cache policy` |
+| Automatic security upgrades | tested | `APT::Periodic::Unattended-Upgrade` must be `"1"`, both apt timers must be `enabled`, the package `unattended-upgrades` must be installed, and the effective `Allowed-Origins` must name `Debian:trixie-security` |
+| Authenticated package sources | tested at build time, configured at install time | `0120-security.hook.chroot` aborts the build unless `apt-get update` authenticates a `trixie-security` archive *and* that archive's own `Origin:` field matches the origin `20samurai-security` names; the installed system must still configure the pocket in `/etc/apt/sources.list{,.d}` |
 | APT pinning that keeps security preferred | implemented | `99samurai` ships in the image; the installed system's `apt-cache policy` priorities are not yet asserted |
 | Persistent system journal | tested | `/var/log/journal` must exist after first boot, which only happens if `Storage=persistent` was read |
 | Release artifact integrity | tested | CI publishes `SHA256`, a GPG detached ASCII-armored signature, and the public key; the signature is verified with `gpg --verify` in the runner |
@@ -62,11 +62,20 @@ can only be pulled in deliberately with `apt install -t`.
 Security updates apply themselves: `APT::Periodic::Update-Package-Lists`,
 `Download-Upgradeable-Packages` and `Unattended-Upgrade` are all `1`, driven by
 the `apt-daily` and `apt-daily-upgrade` timers that the image enables, and
-`unattended-upgrades` is installed to do the work. Which archives may be
-upgraded without asking remains Debian's decision in
-`50unattended-upgrades`; `20samurai-security` only changes the behaviour that
-defaults assume a server: never reboot automatically, and drop dependencies an
-upgrade orphaned.
+`unattended-upgrades` is installed to do the work.
+
+Which archives that updater is allowed to touch is **not** left to Debian's
+`50unattended-upgrades`, because its entries are built from `${distro_id}` —
+which comes from `/etc/lsb-release`, and this project rebrands that file to
+`DISTRIB_ID=Samurai`. Substituted here, Debian's default origin becomes
+`Samurai:trixie-security`, an origin no Debian `Release` file has ever carried,
+so the stock list matches nothing and no package would ever be upgraded while
+every timer, switch and package in the table above still looked correct. So
+`20samurai-security` names the origin literally (`Debian:trixie-security`), and
+the build hook reads the `Origin:` field back out of the `Release` file apt
+just authenticated and fails if the literal stops matching. What remains in that
+file is the behaviour Debian's defaults aim at servers: never reboot
+automatically, and drop dependencies an upgrade orphaned.
 
 ## Access control
 
