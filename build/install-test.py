@@ -1162,6 +1162,10 @@ class InstallerTest:
             # Prefer X11: MangoHUD is documented to be unreliable on Wayland.
             x11 = [f for f in files if "/xsessions/" in f]
             session = Path(x11[0] if x11 else files[0]).name
+        # SDDM matches [Autologin] Session against the session *name*, so the
+        # ".desktop" suffix has to go: passing "plasmax11.desktop" made SDDM
+        # ignore the request and fall back to its Wayland default.
+        session = session.removesuffix(".desktop")
         self.serial.command("mkdir -p /etc/sddm.conf.d", timeout=30)
         self.serial.write_file(
             "/etc/sddm.conf.d/99-install-test-autologin.conf",
@@ -1252,13 +1256,24 @@ class InstallerTest:
 
             applied = self.session_command("samurai-theme set shiro 2>&1")
             record("samurai-theme set shiro", applied)
+            record("session type", self.session_env.get("XDG_SESSION_TYPE", "unknown"))
             if "Applied Samurai shiro color scheme" not in applied:
                 raise Failure(
                     "samurai-theme could not apply a color scheme to a live Plasma session:\n"
                     + applied
                 )
             if "Applied wallpaper shiro.jpg" not in applied:
-                raise Failure("samurai-theme did not apply the Shiro wallpaper:\n" + applied)
+                # samurai-theme hides the tool's output, so ask Plasma directly;
+                # without this the log only says a wallpaper was not applied.
+                reason = self.session_command(
+                    "plasma-apply-wallpaperimage /usr/share/backgrounds/samurai/shiro.jpg 2>&1; "
+                    "echo rc=$?"
+                )
+                record("plasma-apply-wallpaperimage direct", reason)
+                raise Failure(
+                    "samurai-theme did not apply the Shiro wallpaper:\n" + applied
+                    + f"\nplasma-apply-wallpaperimage said:\n{reason}"
+                )
 
             config = self.session_command(
                 "for g in KDE General; do printf '%s=' \"$g\"; kreadconfig6 --file kdeglobals "
