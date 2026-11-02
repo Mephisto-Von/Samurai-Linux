@@ -1,5 +1,11 @@
 # Samurai KDE Plasma and Design System
 
+> **Legacy design document.** There is no `samurai-kuro` or `samurai-shiro`
+> command; the theme switcher is `samurai-theme set kuro|shiro|auto`. The colour
+> schemes and wallpapers described here do ship, but the custom icon set and
+> cursor theme below are still planned and are not in the image. See
+> [`../docs/desktop-and-themes.md`](../docs/desktop-and-themes.md).
+
 ## Kuro - Dark Theme
 
 ### Color Palette

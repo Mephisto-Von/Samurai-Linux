@@ -1,5 +1,13 @@
 # Samurai Package Management and Updates
 
+> **Legacy design document.** None of the commands below exist: there is no
+> `samurai-repo`, `samurai-packages`, `samurai-upgrade`, `samurai-repo-report`
+> or `samurai-repo-update`, no `/var/log/samurai/` and no Samurai APT
+> repository. What actually ships (`samurai-profile`, `samurai-recovery`, apt
+> pinning and unattended security upgrades) is described in
+> [`../docs/architecture.md`](../docs/architecture.md) and
+> [`../docs/known-limitations.md`](../docs/known-limitations.md).
+
 ## Debian Foundation
 - **Package ecosystem**: Debian's APT system
 - **Repository foundation**: Official Debian repositories

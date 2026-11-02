@@ -1,5 +1,11 @@
 # Samurai AI System Configuration
 
+> **Legacy design document.** `samurai-ai` exists and stores provider
+> credentials, but it targets local Ollama only: cloud chat, speech input and
+> speech output described below are not implemented, ctransformors is not used,
+> and Ollama is not baked into the live ISO. See
+> [`../docs/ai-system.md`](../docs/ai-system.md) for the implemented behaviour.
+
 ## 4.1 Local AI Runtime
 
 ### Engine Selection

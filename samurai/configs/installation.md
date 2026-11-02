@@ -1,7 +1,12 @@
 # Samurai Linux Installation and First Boot
 
-> The `samurai-install` installer is not implemented yet; the steps below are
-> the target design. The current ISO boots a live KDE Plasma session.
+> **Legacy design document.** The `samurai-install` installer and the
+> `samurai-backup` command below are not implemented; installation is Calamares,
+> and there is no first-boot wizard - the system boots straight to SDDM. LUKS
+> and UEFI on real firmware have never been installed to in a Samurai test, and
+> Secure Boot is unsupported because the installed GRUB is unsigned. See
+> [`../docs/installation.md`](../docs/installation.md) for the procedure that is
+> actually exercised.
 
 ## Bootable ISO
 

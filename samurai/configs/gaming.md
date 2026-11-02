@@ -1,5 +1,13 @@
 # Samurai Gaming Configuration
 
+> **Legacy design document.** Several items below are not in the image. The
+> Steam client lives in Debian's `non-free` archive, which the shipped APT
+> sources do not enable, so `samurai-gaming install-profile` cannot install it
+> as-is; Heroic Games Launcher is not in Debian and has never been installed
+> here. No Proton title has ever been run, and no overlay has ever been
+> observed, because the CI VM has no GPU. See
+> [`../docs/gaming.md`](../docs/gaming.md) for what actually ships.
+
 ## Gaming Support
 
 ### Compatibility Layer
