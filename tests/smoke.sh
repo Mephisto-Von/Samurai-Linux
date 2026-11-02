@@ -417,4 +417,29 @@ grep -qF "samurai-recovery snapshot" "$REPO_ROOT/build/install-test.py" \
     || fail "the install test never runs the recovery snapshot workflow"
 ok "update and recovery workflows are verified on the installed system"
 
+# 22. The manifest validator has to fail in the right direction. Written as
+# `if awk 'END { exit bad }'; then die`, it rejects a good file and accepts a bad
+# one, because awk signals a problem with exit 1 while `if` runs its body on 0 -
+# that inversion cost build 41528368817, so both directions are pinned here.
+printf 'foo\t1.0\tamd64\nbar\t2.0\tall\n' > "$TMP/good.packages.tsv"
+bash "$REPO_ROOT/build/check-manifest.sh" "$TMP/good.packages.tsv" >/dev/null \
+    || fail "the manifest validator rejects a well formed manifest"
+printf 'foo\t1.0\tamd64\nbar 2.0 all\n' > "$TMP/bad.packages.tsv"
+if bash "$REPO_ROOT/build/check-manifest.sh" "$TMP/bad.packages.tsv" >/dev/null 2>&1; then
+    fail "the manifest validator accepts a row that is not three tab-separated fields"
+fi
+: > "$TMP/empty.packages.tsv"
+if bash "$REPO_ROOT/build/check-manifest.sh" "$TMP/empty.packages.tsv" >/dev/null 2>&1; then
+    fail "the manifest validator accepts an empty manifest"
+fi
+printf '# noarch: installed with no Architecture field\nfoo\t1.0\tamd64\n' \
+    > "$TMP/partial.packages.tsv"
+if bash "$REPO_ROOT/build/check-manifest.sh" "$TMP/partial.packages.tsv" >/dev/null 2>&1; then
+    fail "the manifest validator accepts an installed record with no version or architecture"
+fi
+if bash "$REPO_ROOT/build/check-manifest.sh" >/dev/null 2>&1; then
+    fail "the manifest validator should require a manifest path"
+fi
+ok "the manifest validator accepts good manifests and rejects broken ones"
+
 printf '\nAll %d smoke checks passed.\n' "$pass"

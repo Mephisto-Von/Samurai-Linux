@@ -410,17 +410,7 @@ awk '
     line ~ /^[[:space:]]*$/ { emit(); next }
     END { emit() }
 ' "$ROOT/var/lib/dpkg/status" | sort > "$MANIFEST"
-[[ -s "$MANIFEST" ]] || die "the manifest is empty: dpkg status produced nothing"
-if grep -q '^# ' "$MANIFEST"; then
-    printf '%s\n' "installed packages this build cannot name precisely:" >&2
-    grep '^# ' "$MANIFEST" | head -n 10 >&2
-    die "dpkg status has installed packages with no version or architecture"
-fi
-if awk -F'\t' 'NF != 3 { bad = 1 } END { exit bad }' "$MANIFEST"; then
-    printf '%s\n' "manifest rows that are not package<TAB>version<TAB>architecture (^I is a tab):" >&2
-    awk -F'\t' 'NF != 3' "$MANIFEST" | head -n 5 | cat -A >&2
-    die "the manifest has a line without package, version and architecture"
-fi
+bash "$REPO_ROOT/build/check-manifest.sh" "$MANIFEST"
 manifest_count=$(wc -l < "$MANIFEST")
 if ((manifest_count < 400)); then
     die "the manifest lists only $manifest_count packages; a Plasma system has far more"
