@@ -11,9 +11,10 @@
   boots to SDDM in CI, but no install-test run has been green end to end, so
   partitioning, bootloader installation, and first boot on real hardware are
   still unverified. See [`../../build/README.md`](../../build/README.md).
-- **No release, no signature yet** - the repository has no tag and no GitHub
-  Release. The `Sign the ISO` step needs `SAMURAI_SIGN_*` repository secrets
-  before any published image can be verified.
+- **No release tag or GitHub Release yet** - signing works and is proved in CI
+  (the ISO, its checksum and the package manifest are signed, and the install
+  test verifies them against the key committed under `samurai/keys/`), but no
+  tag will be pushed until an install-test run is green end to end.
 - **Boot menu and splash are Samurai, the kernel boot logo is not** - the
   isolinux and GRUB menus use the Samurai title, entry labels, selection colour
   and splash images, but the Debian logo drawn by the live kernel and the GRUB
@@ -25,7 +26,28 @@
   Secure Boot after installation or sign the bootloader with your own keys.
 - **Artifact retention** - hosted ISO artifacts expire after 7 days.
 
+## Package management and updates
+- **No Samurai APT repository** - every package comes from Debian. Adding a
+  project archive would mean running a signing infrastructure, a mirror and a
+  rebuild cadence, none of which exists here; a rebranded base is not a reason
+  to invent one.
+- **Profile installs are not exercised at runtime** - `samurai-profile` resolves
+  every profile with `apt-get install -s` at build time (a name that has left
+  Debian fails the ISO), but the install test runs its guest with no network, so
+  downloading and installing a real profile, and removing it again, have not
+  been executed on an installed system.
+- **Recovery restores files, not a system state** - `samurai-recovery snapshot`,
+  `verify` and `restore-etc` do run on the installed system in CI. It is not a
+  filesystem snapshot: it captures no `/home`, cannot downgrade a package
+  upgraded in place, and whole-system rollback still needs the installer or a
+  snapshotting filesystem, which this image does not ship.
+- **Unattended upgrades are verified as policy, not as a patch event** - the
+  installed system's archive, origin list and timers are read back, and the
+  build fails unless the security archive authenticates, but no test has yet
+  watched an actual CVE fix arrive and get applied.
+
 ## AI Runtime
+
 - **Model size limited by RAM** - larger models (12B+) need 16 GB+ system RAM
   or a compatible GPU; `samurai-ai check-compatibility` advises what will run
 - **Ollama installed separately** - model management depends on Ollama, which is

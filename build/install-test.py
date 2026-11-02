@@ -1172,6 +1172,7 @@ class InstallerTest:
             self.log("Samurai branding verification passed")
 
         self.verify_security_defaults(values)
+        self.verify_package_management()
 
         self.log("installed system verification passed")
 
@@ -1252,6 +1253,108 @@ class InstallerTest:
                 f"{values.get('passwordless sudoers')!r}"
             )
         self.log("sudo and nftables policy files are root-owned and not group-writable")
+
+    def verify_package_management(self) -> None:
+        """Run the package tools on the installed system, not just on a dev box.
+
+        smoke.sh proves these scripts parse and refuse bad input. Only a real
+        dpkg, apt and /etc can prove samurai-profile resolves and
+        samurai-recovery captures and puts back. The test VM has no network on
+        purpose, so anything that would have to download a .deb is reported as
+        unverified instead of being dressed up as a pass.
+        """
+        report: list[str] = []
+
+        def run(command: str, label: str, timeout: float = 180) -> str:
+            output = self.serial.command(command, timeout=timeout, check=False)
+            report.append(f"### {label}\n$ {command}\n{output}\n")
+            return output
+
+        profiles = run("samurai-profile list", "profile list")
+        for expected in ("debug", "containers", "virtualization"):
+            if expected not in profiles:
+                raise Failure(f"the installed samurai-profile does not offer {expected}:\n{profiles}")
+        refused = run("samurai-profile packages no-such-profile 2>&1", "unknown profile")
+        if "Unknown profile" not in refused:
+            raise Failure(f"samurai-profile accepted a profile it does not know: {refused!r}")
+        # apt can only answer about a profile if the image kept package lists;
+        # the installer is allowed to clean them, so a bare archive is reported
+        # rather than asserted. The build hook resolves every profile anyway.
+        plan = run("samurai-profile plan debug 2>&1 | tail -n 30", "profile plan")
+        if "Unable to locate package" in plan:
+            self.log("the installed system keeps no package lists, so profile resolution is build-time only")
+        elif "gdb" not in plan:
+            raise Failure(f"apt was asked to plan the debug profile and never mentioned it:\n{plan}")
+        else:
+            self.log("samurai-profile resolved the debug profile against the installed system's apt")
+
+        snapshot = run("samurai-recovery snapshot installtest 2>&1 | tail -n 3", "recovery snapshot", timeout=600)
+        lines = [line for line in snapshot.splitlines() if line.startswith("Snapshot: ")]
+        if not lines:
+            raise Failure(f"samurai-recovery recorded no snapshot:\n{snapshot}")
+        store = lines[-1].split("Snapshot: ", 1)[1].strip()
+        contents = run(
+            f"cd {store} && for a in etc.tar.gz package-versions.tsv manual-selections.txt "
+            'enabled-units.txt kernels.txt meta.txt SHA256SUMS; do '
+            'if [ -s "$a" ]; then echo "$a=present"; else echo "$a=missing"; fi; done',
+            "snapshot contents",
+        )
+        if "missing" in contents:
+            raise Failure(f"the snapshot is incomplete:\n{contents}")
+        # Same query, twice: the manifest and dpkg have to agree. The store is
+        # 0700 root, so this is also the check that the privileged redirects
+        # wrote a complete file rather than failing quietly into a directory the
+        # calling user cannot open.
+        recorded = run(
+            f"printf 'manifest=%s dpkg=%s\\n' \"$(wc -l < {store}/package-versions.tsv)\" "
+            '"$(dpkg-query -W -f=\'${Package}\\n\' 2>/dev/null | grep -c .)"',
+            "snapshot manifest size",
+        )
+        counts = [int(word) for word in recorded.replace("=", " ").split() if word.isdigit()]
+        if len(counts) != 2 or counts[0] != counts[1]:
+            raise Failure(f"the snapshot manifest does not match dpkg: {recorded!r}")
+        self.log(f"the snapshot recorded all {counts[1]} installed packages")
+
+        verified = run(f"samurai-recovery verify {store} 2>&1 | tail -n 12", "snapshot integrity")
+        if "OK" not in verified or "verified:" not in verified:
+            raise Failure(f"the snapshot does not verify:\n{verified}")
+
+        # Damage a policy file on purpose and put it back. A restore that is
+        # never exercised is a restore that has never worked, and the firewall
+        # configuration is the right victim: the marker is not valid nft syntax,
+        # so nft --check afterwards proves the restored file really is the one
+        # from the snapshot rather than something that merely looks populated.
+        marker = "SAMURAI-INSTALLTEST-MARKER"
+        run(
+            f"printf '%s\\n' '{marker}' >> /etc/nftables.conf && grep -c '{marker}' /etc/nftables.conf",
+            "marker appended",
+        )
+        restored = run(
+            f"samurai-recovery restore-etc {store} /etc/nftables.conf 2>&1 | tail -n 5",
+            "restore /etc",
+            timeout=300,
+        )
+        if "Restored" not in restored:
+            raise Failure(f"restore-etc reported no restore:\n{restored}")
+        remaining = run(f"grep -c '{marker}' /etc/nftables.conf 2>&1 || true", "marker after restore")
+        if remaining.strip() != "0":
+            raise Failure(f"the damaged firewall policy is still in place: {remaining!r}")
+        checked = run("nft -c -f /etc/nftables.conf 2>&1 && echo RESTORED_VALID", "restored policy syntax")
+        if "RESTORED_VALID" not in checked:
+            raise Failure(f"the restored nftables.conf does not parse:\n{checked}")
+        self.log("restore-etc returned the damaged firewall policy intact")
+
+        # Nothing was installed since the snapshot, so this is the honest limit
+        # of what an offline guest can show: the diff mechanism runs and finds
+        # the set unchanged. Reinstalling a package that appeared later needs a
+        # networked run, and is recorded as such in known-limitations.
+        rollback = run(f"samurai-recovery restore-packages {store} 2>&1 | tail -n 5", "package rollback")
+        if "Nothing has been installed since" not in rollback:
+            raise Failure(f"restore-packages saw a change with nothing installed:\n{rollback}")
+        run("samurai-recovery prune 2>&1 | tail -n 3", "snapshot pruning")
+
+        (self.work / "installed-package-management.txt").write_text("\n".join(report), encoding="utf-8")
+        self.log("package management and recovery verified on the installed system")
 
     # -- desktop (Plasma session) verification --------------------------
 

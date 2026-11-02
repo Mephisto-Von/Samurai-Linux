@@ -32,6 +32,17 @@ while IFS= read -r file; do
 done < <(find_shell_files)
 ok "all shell scripts parse"
 
+# 1b. A quoted message must end its statement: a bare word after the closing
+# quote becomes one more argument to the reporting call, and the command that
+# word began never runs at all. This caught a manifest writer in samurai-profile
+# that was reached only after apt had already failed.
+while IFS= read -r file; do
+    if grep -Eq '(die|warn|log)[[:space:]]+"[^"]*"[[:space:]]+[a-z_]' "$file"; then
+        fail "a message call in $file swallowed the command that followed it"
+    fi
+done < <(find_shell_files)
+ok "no message call swallowed the statement after it"
+
 # 2. ShellCheck when available
 if command -v shellcheck >/dev/null 2>&1; then
     while IFS= read -r file; do

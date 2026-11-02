@@ -146,9 +146,7 @@ cmd_plan() {
 }
 
 record_install() {
-    local name="$1" package line status version
-    mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
-    : > "$STATE_DIR/$name.records.tmp"
+    local name="$1" package line status version records=""
     while IFS= read -r package; do
         # ${db:Status-Abbrev} rather than a grep on prose: "ii " is what dpkg
         # says a genuinely configured package looks like, and an available but
@@ -160,9 +158,19 @@ record_install() {
             warn "$package of profile '$name' is not installed; it is not recorded"
             continue
         fi
-        printf '%s\t%s\n' "$package" "$version" >> "$STATE_DIR/$name.records.tmp"
+        records+="$(printf '%s\t%s\n' "$package" "$version")"$'\n'
     done < <(profile_packages "$name")
-    mv "$STATE_DIR/$name.records.tmp" "$STATE_DIR/$name.records"
+    if [[ -z "$records" ]]; then
+        die "APT reported success but no package of profile '$name' is configured; nothing was recorded"
+    fi
+    # The state lives under /var/lib, so the manifest needs the same privilege
+    # the package operation itself needed. Writing it as the calling user would
+    # leave install succeeding and the record silently missing.
+    as_root install -d -m 0755 "$STATE_DIR" || die "cannot create $STATE_DIR"
+    printf '%s' "$records" | as_root sh -c "cat > '$STATE_DIR/$name.records.tmp'" \
+        || die "the manifest for '$name' could not be written"
+    as_root mv "$STATE_DIR/$name.records.tmp" "$STATE_DIR/$name.records" \
+        || die "the manifest for '$name' could not be put in place"
 }
 
 cmd_install() {
@@ -172,8 +180,10 @@ cmd_install() {
     [[ -n "$packages" ]] || { ml_guidance; return 0; }
     command -v apt-get >/dev/null 2>&1 || die "apt-get not found"
     # shellcheck disable=SC2086  # deliberate word splitting of the package list
-    DEBIAN_FRONTEND=noninteractive as_root apt-get install -y --no-install-recommends $packages \
-        || die "APT refused or failed to install profile '$name'; see the messages above"    record_install "$name"
+    if ! DEBIAN_FRONTEND=noninteractive as_root apt-get install -y --no-install-recommends $packages; then
+        die "APT refused or failed to install profile '$name'; see the messages above"
+    fi
+    record_install "$name"
     log "Profile '$name' installed; manifest: $STATE_DIR/$name.records"
 }
 
@@ -210,7 +220,7 @@ cmd_remove() {
     # shellcheck disable=SC2086  # deliberate word splitting of the package list
     DEBIAN_FRONTEND=noninteractive as_root apt-get remove --auto-remove -y $packages \
         || die "APT refused to remove profile '$name'; see the messages above"
-    rm -f "$STATE_DIR/$name.records"
+    as_root rm -f "$STATE_DIR/$name.records"
     log "Removed profile '$name' and its orphaned dependencies"
 }
 

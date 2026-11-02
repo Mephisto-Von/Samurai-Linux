@@ -18,11 +18,11 @@ it were missing or malformed, but no installed-system check reads it yet.
 | Authenticated package sources | tested at build time, configured at install time | `0120-security.hook.chroot` aborts the build unless `apt-get update` authenticates a `trixie-security` archive *and* that archive's own `Origin:` field matches the origin `20samurai-security` names; the installed system must still configure the pocket in `/etc/apt/sources.list{,.d}` |
 | APT pinning that keeps security preferred | implemented | `99samurai` ships in the image; the installed system's `apt-cache policy` priorities are not yet asserted |
 | Persistent system journal | tested | `/var/log/journal` must exist after first boot, which only happens if `Storage=persistent` was read |
-| Release artifact integrity | tested | CI publishes `SHA256`, a GPG detached ASCII-armored signature, and the public key; the signature is verified with `gpg --verify` in the runner |
+| Release artifact integrity | implemented | the build signs the ISO, its checksum and the package manifest and verifies each signature as it writes it; `install-test.yml` re-imports the key from `samurai/keys/`, checks it against the committed fingerprint and verifies all three. No green run of that step exists yet |
+| Rollback / recovery after a failed update | partly tested | `samurai-recovery snapshot`, `verify` and `restore-etc` run on the installed system in CI; restoring a *package* set needs a networked guest, and this is not a filesystem snapshot - see `known-limitations.md` |
 | Full-disk (LUKS) encryption during install | **not verified** | Calamares ships Debian's partition module configuration, which the project does not modify; no Samurai test has completed an encrypted installation |
 | Secure Boot | **not supported** | no shim signing exists, so the ISO boots only with Secure Boot off or with a user-supplied MOK key |
 | Vulnerability intake and patch process | **incomplete** | private reporting is described below, but there is no security contact, advisory feed, or documented CVE pipeline yet |
-| Rollback / recovery after a failed update | **incomplete** | APT keeps no snapshot; see `known-limitations.md` |
 
 ## Network exposure
 

@@ -82,7 +82,10 @@ cmd_snapshot() {
     command -v apt-mark >/dev/null 2>&1 || die "apt-mark not found: this is a Debian-family tool"
     stamp=$(date -u +%Y%m%dT%H%M%SZ)
     dir="$STORE/$stamp${label:+-$label}"
-    as_root mkdir -p -m 0700 "$dir"
+    # Two steps, because mkdir -m only applies to the directory it creates last:
+    # one call would leave the parents of the store world-traversable.
+    as_root mkdir -p "$(dirname "$dir")"
+    as_root install -d -m 0700 "$dir"
 
     log "Capturing /etc..."
     # Symlinks are stored as links, not as their targets: that is what a restore
@@ -97,8 +100,11 @@ cmd_snapshot() {
     as_root sh -c "dpkg-query -W -f='\${Package}\t\${Version}\n' 'linux-image-*' > '$dir/kernels.txt' 2>/dev/null" || true
 
     log "Checksumming..."
+    # Metadata goes in its own file. Lines that are not "hash  filename" make
+    # sha256sum -c report improperly formatted input, and an integrity check
+    # that always warns is a check that will be ignored the day it is true.
+    as_root sh -c "printf 'created=%s\nhostname=%s\nkernel=%s\n' '$stamp' \"\$(hostname)\" \"\$(uname -r)\" > '$dir/meta.txt'"
     as_root sh -c "cd '$dir' && sha256sum etc.tar.gz package-versions.tsv manual-selections.txt enabled-units.txt kernels.txt > SHA256SUMS"
-    as_root sh -c "printf 'created=%s\nhostname=%s\nkernel=%s\n' '$stamp' \"\$(hostname)\" \"\$(uname -r)\" >> '$dir/SHA256SUMS'"
     as_root du -sh "$dir"
     log "Snapshot: $dir"
 }
@@ -119,6 +125,9 @@ cmd_verify() {
     local dir sums
     dir=$(pick_snapshot "${1:-}")
     [[ -f "$dir/SHA256SUMS" ]] || die "$dir has no SHA256SUMS; it is not a complete snapshot"
+    if [[ -f "$dir/meta.txt" ]]; then
+        as_root cat "$dir/meta.txt"
+    fi
     sums=$(as_root sh -c "cd '$dir' && sha256sum -c SHA256SUMS" 2>&1) || true
     printf '%s\n' "$sums"
     if printf '%s\n' "$sums" | grep -Eq 'FAILED|WARNING'; then
