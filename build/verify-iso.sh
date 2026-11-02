@@ -134,6 +134,7 @@ unsquashfs -f -no-progress -d "$ROOT" "$SQUASHFS" \
     etc/sudoers.d/90samurai \
     etc/apt/preferences.d/99samurai \
     etc/apt/apt.conf.d/20samurai-security \
+    etc/apt/sources.list.d/samurai-security.list \
     etc/systemd/journald.conf.d/99samurai.conf \
     usr/share/color-schemes/samurai-kuro.colors \
     usr/share/color-schemes/samurai-shiro.colors \
@@ -267,6 +268,7 @@ assert_contains etc/sudoers.d/90samurai '^Defaults[[:space:]]env_reset$'
 assert_contains etc/apt/preferences.d/99samurai '^Pin-Priority: 600$'
 assert_contains etc/apt/apt.conf.d/20samurai-security 'APT::Periodic::Unattended-Upgrade "1"'
 assert_contains etc/apt/apt.conf.d/20samurai-security '"Debian:trixie-security"'
+assert_contains etc/apt/sources.list.d/samurai-security.list '^deb http://deb.debian.org/debian-security trixie-security main$'
 assert_contains etc/systemd/journald.conf.d/99samurai.conf '^Storage=persistent$'
 assert_contains usr/local/bin/samurai-profile '^profile_packages\(\) \{$'
 assert_contains usr/local/bin/samurai-recovery '^cmd_snapshot\(\) \{$'
@@ -281,15 +283,28 @@ assert_contains usr/local/bin/samurai-recovery '^cmd_snapshot\(\) \{$'
 unsquashfs -f -no-progress -d "$ROOT" etc/apt/sources.list >/dev/null 2>&1 || true
 unsquashfs -f -no-progress -d "$ROOT" etc/apt/sources.list.d >/dev/null 2>&1 || true
 sources_found=0
+sources_named=()
 for source in "$ROOT/etc/apt/sources.list" "$ROOT/etc/apt/sources.list.d"/*.list \
     "$ROOT/etc/apt/sources.list.d"/*.sources; do
     [[ -e "$source" ]] || continue
     if grep -q 'trixie-security' "$source"; then
-        sources_found=1
+        sources_found=$((sources_found + 1))
+        sources_named+=("$source")
     fi
 done
 if ((sources_found == 0)); then
+    printf '%s\n' "shipped APT sources:" >&2
+    for source in "$ROOT/etc/apt/sources.list" "$ROOT/etc/apt/sources.list.d"/*; do
+        [[ -f "$source" ]] || continue
+        printf '--- %s\n' "$source" >&2
+        cat "$source" >&2
+    done
     die "the image configures no Debian security archive to update from"
+fi
+# samurai-security.list is the one we ship and expect; a second entry beside it
+# makes apt print "Target Packages is configured multiple times" on every run.
+if ((sources_found > 1)); then
+    die "the security archive is configured ${sources_found} times: ${sources_named[*]}"
 fi
 
 log "Checking the permissions the image records for those files"

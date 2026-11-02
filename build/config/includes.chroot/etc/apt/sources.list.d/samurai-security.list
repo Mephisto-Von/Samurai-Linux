@@ -1,0 +1,15 @@
+# /etc/apt/sources.list.d/samurai-security.list
+#
+# The Debian security archive, shipped as a file instead of being requested from
+# live-build: the image's sources.list is rewritten by the build after the
+# squashfs is packed, so an archive that comes only from live-build's own
+# defaults is not guaranteed to be there for the installed system. Two runs
+# (41447034423, 41452920694) shipped images with no security archive at all, and
+# build/verify-iso.sh now fails the build if this file or its equivalent is
+# missing.
+#
+# Only 'main': the security archive does not consistently publish the non-free
+# components, and a 404 there would break every later apt-get update.
+# --security false in auto/config keeps live-build from adding its own entry
+# beside this one, which apt would report as a duplicate source.
+deb http://deb.debian.org/debian-security trixie-security main

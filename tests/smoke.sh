@@ -269,6 +269,7 @@ for policy in \
     etc/sudoers.d/90samurai \
     etc/apt/preferences.d/99samurai \
     etc/apt/apt.conf.d/20samurai-security \
+    etc/apt/sources.list.d/samurai-security.list \
     etc/systemd/journald.conf.d/99samurai.conf; do
     assert_file "$REPO_ROOT/build/config/includes.chroot/$policy"
     grep -qF "$policy" "$REPO_ROOT/build/verify-iso.sh" \
@@ -348,13 +349,18 @@ assert_contains "$out" "--architecture amd64" "config architecture"
 assert_contains "$out" "--binary-image iso-hybrid" "config binary image"
 assert_contains "$out" "--debian-installer none" "config installer"
 assert_contains "$out" "--archive-areas main contrib non-free-firmware" "config archive areas"
-# The security pocket has to be requested twice over: once for the build to
-# fetch from and once for the image to ship, and --security gates the shipped
-# one. Runs 41447034423 and 41452920694 both failed ISO verification because
-# only the build-time half was set.
-assert_contains "$out" "--mirror-chroot-security http://deb.debian.org/debian-security/" "config security mirror"
-assert_contains "$out" "--mirror-binary-security http://deb.debian.org/debian-security/" "config shipped security mirror"
-assert_contains "$out" "--security true" "config enables the security archive"
+# The security pocket ships as a file, not as a live-build option. live-build
+# rewrites /etc/apt/sources.list around the squashfs packing, so asking it for a
+# binary security mirror is not a guarantee the installed system has one: runs
+# 41447034423 and 41452920694 both built images whose shipped sources named no
+# security archive, the second with --security true already set. --security false
+# is deliberate - it stops live-build writing a second entry beside ours, which
+# apt would report as a duplicated source on every update.
+assert_contains "$out" "--security false" "config leaves the security archive to us"
+if grep -vE '^[[:space:]]*#' "$REPO_ROOT/build/auto/config" |
+    grep -qE -- '--mirror-(chroot|binary)-security|--security true'; then
+    fail "auto/config asks live-build for the security archive again; it ships from includes.chroot"
+fi
 ok "live-build config uses valid option names"
 
 # 9. The rest of the required test categories need a gate that can regress by

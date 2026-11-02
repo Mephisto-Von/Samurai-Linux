@@ -19,23 +19,24 @@ lb config noauto \
     --iso-publisher "Samurai Linux Project" \
     --iso-volume "SAMURAI_LINUX" \
     --apt-indices false \
-    --security true \
+    --security false \
     --mirror-bootstrap "http://deb.debian.org/debian/" \
     --mirror-chroot "http://deb.debian.org/debian/" \
-    --mirror-chroot-security "http://deb.debian.org/debian-security/" \
-    --mirror-binary "http://deb.debian.org/debian/" \
-    --mirror-binary-security "http://deb.debian.org/debian-security/"
+    --mirror-binary "http://deb.debian.org/debian/"
 
-# Requesting the security pocket takes two options, and neither one is obvious
-# from the other: --mirror-chroot-security only says where the *build* fetches
-# security packages from, while the sources.list that ships inside the image is
-# written from --mirror-binary* and is gated on --security (lb_config(1):
-# --security "defines if the security repositories specified in the security
-# mirror options should be used or not"). live-build configures the chroot's
-# APT sources for the build and then replaces them with the final ones, so a
-# pocket that was only ever used to build with disappears from the shipped
-# system. Runs 41447034423 and 41452920694 each proved half of this: the first
-# shipped an image that could take no security update, and the second still did
-# after only the build-time mirror was set. verify-iso.sh inspects the squashfs
-# and fails the build when the shipped image configures no trixie-security
-# source, which is the only check that can see this at all.
+# The Debian security pocket is not requested through live-build at all: it
+# ships as config/includes.chroot/etc/apt/sources.list.d/samurai-security.list,
+# and --security false keeps live-build from writing its own entry beside it.
+#
+# Two runs proved why the options cannot be trusted to do this. live-build
+# replaces /etc/apt/sources.list for the build (scripts/build/chroot_archives
+# "install"), packs the rootfs from that tree, and only afterwards rewrites the
+# file with the configuration meant for the final system - so what the squashfs
+# inherits is whatever the build pass left, which is not what the manual says the
+# image will contain. Runs 41447034423 and 41452920694 both built images whose
+# shipped sources listed no security archive even with --mirror-chroot-security
+# and --security true set, and verify-iso.sh caught both. A file under
+# includes.chroot is copied into the chroot once and never revisited, which is
+# the same reason etc/nftables.conf and etc/apt/apt.conf.d/20samurai-security can
+# be relied on. build/verify-iso.sh reads the squashfs and fails the build if the
+# image would ship no security archive.

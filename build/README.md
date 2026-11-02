@@ -188,9 +188,12 @@ published release. Each dispatch has reached further than the previous one - the
 failures have moved from the live session, to partitioning, to the bootloader, to
 the sudo prompt on the installed system, and the last two stopped before the
 installer even ran: `build/verify-iso.sh` refused to publish an image whose
-shipped `sources.list` configured no Debian security archive, which would have
+shipped APT sources configured no Debian security archive, which would have
 made every automatic-update claim inert. Runs 41447034423 and 41452920694 caught
-that; the fix is in `build/auto/config`. The suite now also reads
+that. The pocket now ships as
+`build/config/includes.chroot/etc/apt/sources.list.d/samurai-security.list`
+rather than being requested from live-build, whose own `sources.list` is rewritten
+around the squashfs packing - see `build/auto/config`. The suite also reads
 back the installed security state, exercises `samurai-profile` and
 `samurai-recovery` on the installed system, and runs
 `build/measure-performance.sh` inside a live Plasma session when `--desktop` is

@@ -24,6 +24,7 @@ fail() {
 
 for file in /etc/nftables.conf /etc/apt/preferences.d/99samurai \
 	/etc/apt/apt.conf.d/20samurai-security \
+	/etc/apt/sources.list.d/samurai-security.list \
 	/etc/systemd/journald.conf.d/99samurai.conf; do
 	[ -f "$file" ] || fail "$file is missing from includes.chroot"
 	chown root:root "$file"
@@ -45,14 +46,12 @@ chmod 0755 /etc/nftables.d
 
 # --- a reachable, signed security archive -----------------------------------
 
-# This can only prove that the pocket exists and authenticates *during the
-# build*: live-build configures the chroot's APT sources for its own use and
-# replaces them after the hooks run with the sources the installed system
-# inherits, which come from --mirror-binary* and --security in auto/config.
-# Whether the shipped image can take a security update is therefore checked
-# against the squashfs, by build/verify-iso.sh. Adding a fallback source file
-# here would have been worse than useless: it looked at build-time state, always
-# found the pocket, and never wrote anything.
+# The pocket comes from /etc/apt/sources.list.d/samurai-security.list, which
+# includes.chroot placed there above. What is proved here is that it resolves and
+# authenticates; whether it survives into the image is checked by
+# build/verify-iso.sh against the squashfs, because live-build rewrites
+# /etc/apt/sources.list around the hooks and its own security handling is what
+# failed in runs 41447034423 and 41452920694.
 apt-get update -o APT::Acquire::Retries=3 \
 	|| fail "apt could not update from the configured archives (an unsigned or unreachable one is fatal here)"
 apt-cache policy | grep -q 'n=trixie-security' \
