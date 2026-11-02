@@ -57,12 +57,21 @@ sudo bash build/build.sh --clean
 sudo -E SAMURAI_SIGN_KEY="your-gpg-key-id" bash build/build.sh
 ```
 
-This creates an armored detached signature (`*.iso.sig`) next to the ISO. Verify it with:
+This creates an armored detached signature (`*.iso.sig`) next to the ISO. The
+hosted build signs the checksum and the package manifest too - a checksum that
+is not itself signed protects nothing, because whoever can replace the ISO can
+rewrite the hash beside it. Verify a download with:
 
 ```bash
-gpg --verify dist/*.iso.sig dist/*.iso
+gpg --import samurai/keys/samurai-release.asc
 (cd dist && sha256sum -c ./*.iso.sha256)
+gpg --verify dist/*.iso.sha256.sig dist/*.iso.sha256
+gpg --verify dist/*.iso.sig dist/*.iso
+gpg --verify dist/*.packages.tsv.sig dist/*.packages.tsv
 ```
+
+The key's fingerprint is committed at `samurai/keys/samurai-release.fpr`, and CI
+refuses to publish a release whose signing key does not match it.
 
 ## Verify the ISO
 
