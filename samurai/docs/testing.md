@@ -32,6 +32,15 @@ publishes a number no harness measured.
 Do not run `samurai-gaming install-profile` as a smoke test: it installs packages
 and modifies the system.
 
+Smoke also keeps each required test category attached to the gate that proves it,
+so deleting that gate fails here instead of quietly going green: build
+prerequisite detection (`build/build.sh --check` is *run* with an impossible disk
+requirement and must refuse), boot configuration (auto-boot timeout,
+`console=ttyS0,115200n8` on both bootloaders, the installed `/etc/default/grub`),
+the QEMU boot test, detached signatures over the ISO, its checksum and the
+package manifest plus a fingerprint cross-check against `samurai/keys/`, and the
+update and recovery workflows the install test reads back.
+
 ### 2. Build Pipeline Tests
 - `bash build/build.sh --check` passes (host, tools, disk, config generation)
 - `lb build` completes and the hybrid ISO appears under `dist/`

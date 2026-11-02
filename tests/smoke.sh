@@ -357,4 +357,54 @@ assert_contains "$out" "--mirror-binary-security http://deb.debian.org/debian-se
 assert_contains "$out" "--security true" "config enables the security archive"
 ok "live-build config uses valid option names"
 
+# 9. The rest of the required test categories need a gate that can regress by
+# silence: each one is checked by a script somewhere else, and if that check is
+# deleted the pipeline still goes green. This section keeps them named.
+for prereq in 'A Linux build host is required' 'Only x86_64 is supported' \
+    'Missing build tool' 'Need at least'; do
+    grep -q "$prereq" "$REPO_ROOT/build/build.sh" \
+        || fail "build.sh no longer detects the prerequisite: $prereq"
+done
+grep -Eq 'for tool in lb debootstrap xorriso mksquashfs' "$REPO_ROOT/build/build.sh" \
+    || fail "build.sh no longer checks the tools the build needs"
+# --check has to actually refuse. An impossible disk requirement is the one gate
+# that behaves the same on every host, so the check is run rather than read.
+if SAMURAI_MIN_DISK_GB=100000000 bash "$REPO_ROOT/build/build.sh" --check >/dev/null 2>&1; then
+    fail "build.sh --check accepted a host that cannot possibly have the disk it needs"
+fi
+ok "build prerequisite detection runs and refuses an unprepared host"
+
+# Kernel and boot configuration: auto-boot timeout, serial console on both
+# bootloaders, and the same parameter in the installed system's grub config.
+for boot_check in "^timeout" "console=ttyS0,115200n8" "etc/default/grub"; do
+    grep -qF "$boot_check" "$REPO_ROOT/build/verify-iso.sh" \
+        || fail "ISO verification no longer checks the boot configuration: $boot_check"
+done
+grep -q 'bash build/qemu-test.sh' "$REPO_ROOT/.github/workflows/build-iso-hosted.yml" \
+    || fail "the hosted build no longer boots the image it produced"
+ok "boot configuration and the ISO boot test are gated"
+
+# Checksum and signature verification: the ISO, its checksum and the package
+# manifest each need a detached signature, checked against the repository key
+# whose fingerprint is cross-read rather than trusted.
+for artifact in "sign \"\$iso\"" "sign \"\$iso.sha256\"" "sign \"\$manifest\""; do
+    grep -qF "$artifact" "$REPO_ROOT/.github/workflows/build-iso-hosted.yml" \
+        || fail "the hosted build no longer signs an artifact: $artifact"
+done
+for gate in "samurai-release.asc" "samurai-release.fpr" "*.packages.tsv"; do
+    grep -qF "$gate" "$REPO_ROOT/.github/workflows/install-test.yml" \
+        || fail "the install test no longer verifies the release artifact: $gate"
+done
+ok "release artifacts can only be consumed through a verified signature"
+
+# Update and recovery workflows, as configured state on the installed system.
+for updater in "apt-daily-upgrade.timer" "unattended upgrades" "Allowed-Origins" \
+    "upgrade origins"; do
+    grep -qF "$updater" "$REPO_ROOT/build/install-test.py" \
+        || fail "the install test does not verify the update workflow: $updater"
+done
+grep -qF "samurai-recovery snapshot" "$REPO_ROOT/build/install-test.py" \
+    || fail "the install test never runs the recovery snapshot workflow"
+ok "update and recovery workflows are verified on the installed system"
+
 printf '\nAll %d smoke checks passed.\n' "$pass"
