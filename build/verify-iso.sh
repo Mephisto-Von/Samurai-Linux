@@ -312,17 +312,40 @@ log "Checking the permissions the image records for those files"
 # non-root user rewrites ownership, and sudo ignores a group-writable sudoers
 # drop-in while nft refuses to read a group-writable configuration, so a wrong
 # mode is a security policy that is present and silently not applied.
-unsquashfs -lm "$SQUASHFS" > "$TMP_DIR/squashfs-listing.txt"
+#
+# -ll is the ls -l style listing and -dest . makes it print ./path instead of
+# prefixing the default squashfs-root/. Both flags have to be right: an option
+# unsquashfs does not recognise prints its usage to stdout and exits 1, which is
+# how run 41514577159 lost fifteen minutes of build with nothing on stderr.
+if ! unsquashfs -ll -dest . -quiet "$SQUASHFS" > "$TMP_DIR/squashfs-listing.txt"; then
+    printf '%s\n' "what unsquashfs wrote to stdout:" >&2
+    head -n 20 "$TMP_DIR/squashfs-listing.txt" >&2
+    die "unsquashfs could not list the squashfs metadata"
+fi
+# Turn "mode owner/group size date time path" into "mode<TAB>owner/group<TAB>path".
+# The path is everything after the timestamp rather than the last field, because
+# a path may contain spaces; symlink lines are dropped, since their listing
+# continues " -> target" and a link's own mode is always 777 anyway.
+awk '{ ts = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9] "
+    if (!match($0, ts) || $1 ~ /^l/) next
+    name = substr($0, RSTART + RLENGTH)
+    sub(/^\.\//, "", name)
+    print $1 "\t" $2 "\t" name
+}' "$TMP_DIR/squashfs-listing.txt" > "$TMP_DIR/squashfs-modes.tsv"
+[[ -s "$TMP_DIR/squashfs-modes.tsv" ]] || die "the squashfs listing contains no file records"
+
 assert_image_mode() {
     local path=$1 expect=$2 found
-    found=$(awk -v p="$path" '{ name = $NF; sub(/^\./, "", name)
-        if (name == p) { print $1, $2; exit } }' "$TMP_DIR/squashfs-listing.txt")
+    found=$(awk -F'\t' -v p="$path" '$3 == p { print $1, $2; exit }' "$TMP_DIR/squashfs-modes.tsv")
     [[ -n "$found" ]] || die "/$path is not in the squashfs metadata"
     if [[ "$found" != "$expect" ]]; then
         die "/$path is recorded as '$found', expected '$expect'"
     fi
 }
-assert_image_mode etc/sudoers.d/90samurai '-rw-r----- root/root'
+# Every expected mode is the one build/config/hooks/normal/0120-security.hook.chroot
+# or build/build.sh sync_assets sets, so a mismatch means the hook stopped running
+# or live-build copied something else over it.
+assert_image_mode etc/sudoers.d/90samurai '-r--r----- root/root'
 assert_image_mode etc/nftables.conf '-rw-r--r-- root/root'
 assert_image_mode etc/apt/preferences.d/99samurai '-rw-r--r-- root/root'
 assert_image_mode etc/apt/apt.conf.d/20samurai-security '-rw-r--r-- root/root'
@@ -332,12 +355,14 @@ assert_image_mode usr/local/bin/samurai-recovery '-rwxr-xr-x root/root'
 # security archive the updater cannot read is the failure this whole check exists
 # to prevent.
 assert_image_mode etc/apt/sources.list.d/samurai-security.list '-rw-r--r-- root/root'
+assert_image_mode etc/systemd/journald.conf.d/99samurai.conf '-rw-r--r-- root/root'
+assert_image_mode usr/share/color-schemes/samurai-kuro.colors '-rw-r--r-- root/root'
+assert_image_mode usr/share/color-schemes/samurai-shiro.colors '-rw-r--r-- root/root'
 
 # The published wallpaper count has to mean something about the shipped image,
 # not only about the repository: this is the gate that holds it.
-image_wallpapers=$(awk '{ name = $NF; sub(/^\./, "", name)
-    if (name ~ /^usr\/share\/backgrounds\/samurai\/[^/]+\.jpg$/) count++ }
-    END { print count + 0 }' "$TMP_DIR/squashfs-listing.txt")
+image_wallpapers=$(awk -F'\t' '$3 ~ /^usr\/share\/backgrounds\/samurai\/[^\/]+\.jpg$/ { c++ }
+    END { print c + 0 }' "$TMP_DIR/squashfs-modes.tsv")
 source_wallpapers=$(find "$REPO_ROOT/build/config/includes.chroot/usr/share/backgrounds/samurai" \
     -type f -name '*.jpg' | wc -l | tr -d '[:space:]')
 if [[ "$image_wallpapers" != "$source_wallpapers" ]]; then
