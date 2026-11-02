@@ -39,8 +39,9 @@ visudo -c -f "$sudoers" >/dev/null 2>&1 || fail "$sudoers is not valid sudoers s
 visudo -c >/dev/null 2>&1 || fail "the merged sudoers configuration does not validate"
 
 # Exception directory for the firewall. Empty by design; see nftables.conf.
-mkdir -p -m 0755 /etc/nftables.d
+mkdir -p /etc/nftables.d
 chown root:root /etc/nftables.d
+chmod 0755 /etc/nftables.d
 
 # --- a signed security archive that is actually configured ------------------
 
