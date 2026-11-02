@@ -442,4 +442,29 @@ if bash "$REPO_ROOT/build/check-manifest.sh" >/dev/null 2>&1; then
 fi
 ok "the manifest validator accepts good manifests and rejects broken ones"
 
+# 23. The signing step's fingerprint pipeline has to run on the gpg that is
+# actually installed. Build 41539298221 produced three good signatures and then
+# died on `gpg --fingerprints`, which GnuPG 2.5 removed, so the extraction is run
+# here against the key the repository publishes rather than merely read.
+if command -v gpg >/dev/null 2>&1; then
+    keyring="$TMP/gnupg"
+    mkdir -p "$keyring"
+    chmod 700 "$keyring"
+    if ! GNUPGHOME="$keyring" gpg --batch --import "$REPO_ROOT/samurai/keys/samurai-release.asc" \
+        >/dev/null 2>&1; then
+        fail "gpg could not import samurai/keys/samurai-release.asc"
+    fi
+    listed=$(GNUPGHOME="$keyring" gpg --batch --with-colons --list-keys \
+        | awk -F: '$1 == "fpr" { print $10; exit }')
+    documented=$(tr -d '[:space:]' < "$REPO_ROOT/samurai/keys/samurai-release.fpr")
+    [[ "$listed" == "$documented" ]] \
+        || fail "the published key reports fingerprint ${listed:-none}, not $documented"
+    if grep -rn -- '--fingerprints' "$REPO_ROOT/.github/workflows" >/dev/null; then
+        fail "a workflow passes --fingerprints to gpg, an option GnuPG 2.5 removed"
+    fi
+    ok "the release key fingerprint is read the way the signing step reads it"
+else
+    printf 'skip - gpg not installed, the fingerprint pipeline was not run\n'
+fi
+
 printf '\nAll %d smoke checks passed.\n' "$pass"

@@ -148,8 +148,15 @@ jobs:
           done
           # Publish the public half so users can verify without the repo.
           gpg --armor --export "$SAMURAI_SIGN_KEY" > dist/samurai-release-key.asc
-          gpg --with-colons --fingerprints --list-keys "$SAMURAI_SIGN_KEY" \
+          # The plural form of the fingerprint option was removed in GnuPG 2.5,
+          # and the machine-readable listing carries the fingerprint anyway:
+          # the first fpr record is the primary key's.
+          gpg --batch --with-colons --list-keys "$SAMURAI_SIGN_KEY" \
             | awk -F: '$1 == "fpr" { print $10; exit }' | tee dist/samurai-release-key.fpr
+          if [[ ! -s dist/samurai-release-key.fpr ]]; then
+            echo "gpg did not report a fingerprint for the signing key" >&2
+            exit 1
+          fi
           # The exported key is only a trust anchor if it is the key the
           # repository documents. A rotated CI secret would otherwise sign a
           # release nobody outside this runner could verify.

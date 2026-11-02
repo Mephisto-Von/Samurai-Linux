@@ -200,7 +200,18 @@ an option it knows, and `unsquashfs` reports an unknown option by printing its
 usage to stdout and exiting 1 - so the check died with nothing on stderr. It lists
 with `-ll -dest .` now, the sudoers expectation matches the 0440 the security hook
 sets, and `/usr/local/bin` and its tools are chowned to root, because live-build
-copies them with the owner of the checkout (uid 1001 in a hosted build). The suite
+copies them with the owner of the checkout (uid 1001 in a hosted build). Two more
+runs (41520207923, 41528368817) then died in the manifest check, which was written
+as `if awk 'END { exit bad }'` and so rejected a well formed manifest while
+accepting a broken one; the validator is `build/check-manifest.sh` now, with both
+directions pinned by a smoke check. Run 41539298221 got further than any build has:
+every `verify-iso.sh` gate passed on a real image and the QEMU boot test passed, and
+it failed in `Sign the ISO` after producing three good signatures - the fingerprint
+export asked gpg for `--fingerprints`, which GnuPG 2.5 removed. The signing step now
+reads the fingerprint from `gpg --batch --with-colons --list-keys`, and a smoke
+check runs that same pipeline against `samurai/keys/samurai-release.asc`. Because
+signing failed the ISO artifact was not uploaded, so the install test was skipped
+and still has no green run. The suite
 also reads back the installed security state, exercises `samurai-profile` and
 `samurai-recovery` on the installed system, and runs
 `build/measure-performance.sh` inside a live Plasma session when `--desktop` is
