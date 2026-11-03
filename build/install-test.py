@@ -651,6 +651,7 @@ class InstallerTest:
         screenshot: str,
         *,
         dismiss_welcome: bool = False,
+        watch: tuple[str, str] | None = None,
     ) -> Path:
         if isinstance(needles, str):
             needles = (needles,)
@@ -672,6 +673,34 @@ class InstallerTest:
                 return self.vnc.stable_capture(f"{screenshot}.png")
             if "installation failed" in normalized or "installer failed" in normalized:
                 raise Failure(f"Calamares reported a failure while waiting for {label}; see {image}")
+            # A process that died is not going to paint the page being waited
+            # for, and OCR of the desktop says nothing about why.  Its own log
+            # does, so a crash fails here with that output instead of burning
+            # the whole timeout and reporting pixels.
+            if watch is not None and self.serial is not None and attempt % 3 == 0:
+                process, logfile = watch
+                state = self.serial.command(
+                    f"pgrep -x {process} >/dev/null && echo yes || echo no", timeout=30
+                )
+                if state.strip() != "yes":
+                    output = self.serial.command(
+                        f"tail -n 200 {logfile} 2>/dev/null || true", timeout=60
+                    )
+                    # The X server dying takes Calamares and KWin with it, and
+                    # its log is the only place that says why.
+                    display = self.serial.command(
+                        'dmesg | tail -n 40; for f in /var/log/Xorg.0.log '
+                        '/run/sddm/xorg.log /root/.local/share/sddm/xorg-session.log '
+                        '/home/*/.local/share/sddm/xorg-session.log; do '
+                        'if [ -r "$f" ]; then echo "--- $f"; tail -n 40 "$f"; fi; done; true',
+                        timeout=90,
+                    )
+                    self.vnc.capture(f"{screenshot}-process-gone.png")
+                    raise Failure(
+                        f"{process} exited while waiting for {label}; tail of {logfile}:\n"
+                        f"{output[-4000:]}\n"
+                        f"display server evidence:\n{display[-4000:]}"
+                    )
             time.sleep(4)
         self.vnc.capture(f"{screenshot}-timeout.png")
         raise Failure(
@@ -881,6 +910,7 @@ class InstallerTest:
             240,
             "01-welcome",
             dismiss_welcome=True,
+            watch=("calamares", "/tmp/calamares.out"),
         )
         self.advance(
             ("system language", "zone:", "region"),
