@@ -766,6 +766,10 @@ class InstallerTest:
         self.log(f"clicking the primary button at {x},{y} (screen {width}x{height})")
         self.vnc.click(x, y)
 
+    def page_signature(self, text: str) -> frozenset[str]:
+        """The words OCR can see, for telling one Calamares page from another."""
+        return frozenset(word for word in re.findall(r"[a-z]{3,}", text.lower()))
+
     def advance(
         self,
         needle: str | tuple[str, ...],
@@ -773,11 +777,49 @@ class InstallerTest:
         timeout: float,
         screenshot: str,
     ) -> None:
-        # One click only. A retry can land on the next page while OCR is still
-        # processing the previous screenshot and skip a whole step.
-        if not self.click_word("next"):
-            self.vnc.key("alt-n")
-        self.wait_for(needle, label, timeout, screenshot)
+        # A click can be swallowed: Calamares spends the first seconds after the
+        # welcome page loading the partition module and running os-prober, and a
+        # click that lands in that window does nothing at all (run 41604632927
+        # sat on Welcome for its whole 90-second locale timeout). Retrying blind
+        # is the other failure: a second click that lands after the page has
+        # already changed skips a step. So a retry happens only when the screen
+        # still shows the page the click was aimed at.
+        if isinstance(needle, str):
+            needles = (needle,)
+        else:
+            needles = tuple(needle)
+        before = self.page_signature(self.ocr_text(self.vnc.capture(f"{screenshot}-before.png")))
+        clicked = time.time()
+        clicks = 0
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            image = self.vnc.stable_capture(f"{screenshot}-attempt.png")
+            text = self.ocr_text(image)
+            normalized = re.sub(r"\s+", " ", text.lower())
+            if any(needle.lower() in normalized for needle in needles):
+                self.log(f"detected {label!r}")
+                self.vnc.stable_capture(f"{screenshot}.png")
+                return
+            if "installation failed" in normalized or "installer failed" in normalized:
+                raise Failure(f"Calamares reported a failure while waiting for {label}; see {image}")
+            if time.time() - clicked < 25:
+                time.sleep(3)
+                continue
+            if clicks >= 3:
+                break
+            now = self.page_signature(text)
+            overlap = len(before & now) / max(1, len(before | now))
+            if overlap < 0.75:
+                self.log(f"{label}: the screen changed without matching {needles!r}, not re-clicking")
+                before, clicked = now, time.time()
+                continue
+            clicks += 1
+            self.log(f"{label}: still on the same page after 25 s, clicking Next again ({clicks})")
+            if not self.click_word("next"):
+                self.vnc.key("alt-n")
+            clicked = time.time()
+        self.vnc.capture(f"{screenshot}-gave-up.png")
+        raise Failure(f"never reached {label} after {clicks + 1} click(s); last OCR: {normalized[-1500:]}")
 
     def calamares_log_size(self) -> int:
         assert self.serial
