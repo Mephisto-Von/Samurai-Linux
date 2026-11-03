@@ -88,6 +88,34 @@ grep -q "\"$security_origin:trixie-security\"" /etc/apt/apt.conf.d/20samurai-sec
 apt-config dump Unattended-Upgrade::Allowed-Origins 2>&1 | grep -q 'security' \
 	|| fail "apt reads no Allowed-Origins entry naming the security archive"
 
+# --- put the security updates in before the root filesystem is packed -------
+#
+# Doing this here is not a nicety. live-build's binary stage runs its own apt
+# upgrade over the chroot *after* binary_rootfs has already written the
+# squashfs, and binary_linux-image then copies the newest /boot/vmlinuz into
+# /live. Run 41545976827 shipped exactly that split: the ISO booted
+# 6.12.115+deb13.1 while /lib/modules in the image held only 6.12.107+deb13, so
+# autoload found nothing (modprobe: "Module nf_tables not found in directory
+# /lib/modules/6.12.115+deb13.1-amd64"), nft failed with "Unable to initialize
+# Netlink socket: Protocol not supported" and nftables.service exited 3. The
+# same packages are upgraded at the same point in the run either way; the
+# difference is whether the kernel the image boots has its modules in it.
+apt-get -y dist-upgrade || fail "security updates could not be installed into the image"
+
+# A kernel that cannot load netfilter cannot run the default-deny ruleset, so
+# the pairing is asserted off the chroot that becomes the squashfs.
+kernels=0
+for image in /boot/vmlinuz-*; do
+	[ -f "$image" ] || continue
+	kernels=$((kernels + 1))
+	version=${image##*/vmlinuz-}
+	[ -d "/lib/modules/$version" ] \
+		|| fail "/boot has vmlinuz-$version but /lib/modules/$version is absent: the image would boot a kernel with no loadable modules"
+	ls "/lib/modules/$version/kernel/net/netfilter/" 2>/dev/null | grep -q '^nf_tables\.ko' \
+		|| fail "vmlinuz-$version ships no nf_tables module, so the shipped ruleset cannot load"
+done
+[ "$kernels" -gt 0 ] || fail "the image has no /boot/vmlinuz-* at all"
+
 # --- the units that make the configuration live -----------------------------
 
 for unit in nftables.service apparmor.service apt-daily.timer apt-daily-upgrade.timer; do

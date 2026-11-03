@@ -250,6 +250,65 @@ log "Checking that the live rootfs can run update-grub"
 unsquashfs -l "$SQUASHFS" boot/grub >/dev/null 2>&1 \
     || die "the live rootfs has no /boot/grub; Calamares could not write grub.cfg"
 
+log "Checking the kernel the ISO boots against the modules in the live rootfs"
+# The squashfs metadata is read once here and reused for the mode checks below.
+# It is read rather than extracted because extracting as a non-root user rewrites
+# ownership, and sudo ignores a group-writable sudoers drop-in while nft refuses
+# to read a group-writable configuration, so a wrong mode is a security policy
+# that is present and silently not applied.
+#
+# -ll is the ls -l style listing and -dest . makes it print ./path instead of
+# prefixing the default squashfs-root/. Both flags have to be right: an option
+# unsquashfs does not recognise prints its usage to stdout and exits 1, which is
+# how run 41514577159 lost fifteen minutes of build with nothing on stderr.
+#
+# /live/vmlinuz and /lib/modules are produced by different live-build stages, so
+# they can disagree: the binary stage upgrades the chroot after binary_rootfs has
+# packed the squashfs, and binary_linux-image then copies the *newest* /boot
+# kernel into /live. Run 41545976827 shipped a 6.12.115+deb13.1 kernel over a
+# squashfs whose only modules tree was 6.12.107+deb13 - every module failed to
+# load, including nf_tables, which took the firewall with it. Match /live/vmlinuz
+# to a kernel that is actually in the image by content, not by name.
+if ! unsquashfs -ll -dest . -quiet "$SQUASHFS" > "$TMP_DIR/squashfs-listing.txt"; then
+    printf '%s\n' "what unsquashfs wrote to stdout:" >&2
+    head -n 20 "$TMP_DIR/squashfs-listing.txt" >&2
+    die "unsquashfs could not list the squashfs metadata"
+fi
+# Turn "mode owner/group size date time path" into "mode<TAB>owner/group<TAB>path".
+# The path is everything after the timestamp rather than the last field, because
+# a path may contain spaces; symlink lines are dropped, since their listing
+# continues " -> target" and a link's own mode is always 777 anyway.
+awk '{ ts = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9] "
+    if (!match($0, ts) || $1 ~ /^l/) next
+    name = substr($0, RSTART + RLENGTH)
+    sub(/^\.\//, "", name)
+    print $1 "\t" $2 "\t" name
+}' "$TMP_DIR/squashfs-listing.txt" > "$TMP_DIR/squashfs-modes.tsv"
+[[ -s "$TMP_DIR/squashfs-modes.tsv" ]] || die "the squashfs listing contains no file records"
+
+live_kernel_hash=$(sha256sum "$TMP_DIR/vmlinuz" | cut -d' ' -f1)
+booted_version=""
+while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    unsquashfs -f -no-progress -d "$ROOT" "$candidate" >/dev/null 2>&1 || continue
+    if [[ $(sha256sum "$ROOT/$candidate" | cut -d' ' -f1) == "$live_kernel_hash" ]]; then
+        booted_version="${candidate##*/vmlinuz-}"
+        break
+    fi
+done < <(awk -F'\t' '$3 ~ /^boot\/vmlinuz-/ { print $3 }' "$TMP_DIR/squashfs-modes.tsv")
+if [[ -z "$booted_version" ]]; then
+    printf '%s\n' "kernels in the live rootfs:" >&2
+    awk -F'\t' '$3 ~ /^boot\/vmlinuz-/ { print "  /" $3 }' "$TMP_DIR/squashfs-modes.tsv" >&2
+    die "/live/vmlinuz is not any kernel in the live rootfs: the ISO would boot a kernel whose modules are not in the image"
+fi
+grep -Fq "lib/modules/$booted_version/" "$TMP_DIR/squashfs-modes.tsv" \
+    || die "the ISO boots $booted_version but the live rootfs has no /lib/modules/$booted_version"
+grep -F "lib/modules/$booted_version/" "$TMP_DIR/squashfs-modes.tsv" \
+    | grep -Fq '/net/netfilter/nf_tables.ko' \
+    || die "the ISO boots $booted_version, whose tree has no nf_tables module: the default-deny ruleset could not load"
+log "the ISO boots $booted_version and the live rootfs carries its modules"
+
+
 log "Checking installed packages needed by the installer"
 assert_contains var/lib/dpkg/status '^Package: calamares$'
 assert_contains var/lib/dpkg/status '^Package: calamares-settings-debian$'
@@ -308,32 +367,7 @@ if ((sources_found > 1)); then
 fi
 
 log "Checking the permissions the image records for those files"
-# Read from the squashfs metadata rather than an extraction: extracting as a
-# non-root user rewrites ownership, and sudo ignores a group-writable sudoers
-# drop-in while nft refuses to read a group-writable configuration, so a wrong
-# mode is a security policy that is present and silently not applied.
-#
-# -ll is the ls -l style listing and -dest . makes it print ./path instead of
-# prefixing the default squashfs-root/. Both flags have to be right: an option
-# unsquashfs does not recognise prints its usage to stdout and exits 1, which is
-# how run 41514577159 lost fifteen minutes of build with nothing on stderr.
-if ! unsquashfs -ll -dest . -quiet "$SQUASHFS" > "$TMP_DIR/squashfs-listing.txt"; then
-    printf '%s\n' "what unsquashfs wrote to stdout:" >&2
-    head -n 20 "$TMP_DIR/squashfs-listing.txt" >&2
-    die "unsquashfs could not list the squashfs metadata"
-fi
-# Turn "mode owner/group size date time path" into "mode<TAB>owner/group<TAB>path".
-# The path is everything after the timestamp rather than the last field, because
-# a path may contain spaces; symlink lines are dropped, since their listing
-# continues " -> target" and a link's own mode is always 777 anyway.
-awk '{ ts = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9] "
-    if (!match($0, ts) || $1 ~ /^l/) next
-    name = substr($0, RSTART + RLENGTH)
-    sub(/^\.\//, "", name)
-    print $1 "\t" $2 "\t" name
-}' "$TMP_DIR/squashfs-listing.txt" > "$TMP_DIR/squashfs-modes.tsv"
-[[ -s "$TMP_DIR/squashfs-modes.tsv" ]] || die "the squashfs listing contains no file records"
-
+# $TMP_DIR/squashfs-modes.tsv, built above, is the squashfs metadata listing.
 image_mode_problems=()
 assert_image_mode() {
     local path=$1 expect=$2 found
