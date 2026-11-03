@@ -145,10 +145,10 @@ armored detached `.sig` when signing is enabled.
 | `samurai-theme` CLI | Applies real KDE color schemes; the install test's desktop phase checks it against a live Plasma session, and that phase has not produced a green run yet |
 | `samurai-gaming` CLI | Installs `steam-installer`, GameMode, MangoHUD and optional tools; refuses to pretend when `non-free` is off |
 | `samurai-profile` / `samurai-recovery` | Implemented; the install test asserts against them on the installed system, though no install-test run has gone green end to end, and profile installs need network, which the test guest does not have |
-| Security defaults in the image | nftables default-deny, AppArmor profiles, sudo policy, `unattended-upgrades` for `Debian:trixie-security`, APT pinning - read back off the installed system, not asserted from package presence |
+| Security defaults in the image | sudo policy, AppArmor, `unattended-upgrades` for `Debian:trixie-security` and APT pinning ship and are read back off the installed system rather than asserted from package presence; **the nftables default-deny ruleset currently fails to load** in the live session (`nftables.service`, run `41596964514`), so the firewall is not yet a working control |
 | `live-build` ISO pipeline | Hosted workflow builds a bootable hybrid ISO |
 | CI (ShellCheck + smoke tests) | Passing on GitHub Actions |
-| Bootable ISO boot-tested | QEMU boot to SDDM verified in run `40346119925` |
+| Bootable ISO boot-tested | QEMU boot to SDDM verified in run `41545976827` (earlier `40346119925`) |
 | Calamares installer | ⚠️ Ships and branded; the scripted install-to-disk driver (`build/install-test.py`) has not yet produced a green run |
 | Installed-system verification | Drives Calamares over VNC/OCR, boots the disk, checks GRUB, security state, package tooling |
 | Plasma desktop + MangoHUD verification | ⚠️ Automated (`--desktop` phase); not yet green |
