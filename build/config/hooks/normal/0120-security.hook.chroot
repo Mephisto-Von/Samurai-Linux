@@ -111,7 +111,13 @@ for image in /boot/vmlinuz-*; do
 	version=${image##*/vmlinuz-}
 	[ -d "/lib/modules/$version" ] \
 		|| fail "/boot has vmlinuz-$version but /lib/modules/$version is absent: the image would boot a kernel with no loadable modules"
-	ls "/lib/modules/$version/kernel/net/netfilter/" 2>/dev/null | grep -q '^nf_tables\.ko' \
+	nftables_module=""
+	for module in "/lib/modules/$version/kernel/net/netfilter/"nf_tables.ko*; do
+		if [ -f "$module" ]; then
+			nftables_module=$module
+		fi
+	done
+	[ -n "$nftables_module" ] \
 		|| fail "vmlinuz-$version ships no nf_tables module, so the shipped ruleset cannot load"
 done
 [ "$kernels" -gt 0 ] || fail "the image has no /boot/vmlinuz-* at all"
