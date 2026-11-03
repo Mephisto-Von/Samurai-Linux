@@ -528,8 +528,13 @@ class InstallerTest:
             "4",
             "-display",
             f"vnc=127.0.0.1:{self.vnc_display}",
+            # KWin under -vga std has no real DRM device and dies when Calamares
+            # paints its QML partition preview, taking XWayland and the installer
+            # with it (runs 41545976827 and 41596964514, both at the same step).
+            # virtio-gpu gives the guest a KMS driver, which is what Plasma
+            # expects; the VNC server mirrors it the same way.
             "-vga",
-            "std",
+            "virtio",
             "-usb",
             "-device",
             "usb-tablet",
@@ -844,10 +849,30 @@ class InstallerTest:
         )
         self.log("wrote Calamares test overlays")
 
+    def report_firewall(self) -> None:
+        """Put the firewall's actual state in the log rather than infer it.
+
+        Run 41596964514 booted the live session with nftables.service failed
+        ("Main process exited, code=exited, status=3/NOTIMPLEMENTED"), and a
+        packet filter that does not load is not a security control, so the
+        reason has to be visible instead of an exit code three lines deep in
+        dmesg.
+        """
+        assert self.serial
+        report = self.serial.command(
+            "systemctl status nftables --no-pager -l 2>&1 | tail -n 12; "
+            "nft --check --file /etc/nftables.conf 2>&1 | tail -n 12; "
+            "nft list ruleset 2>&1 | head -n 5",
+            timeout=90,
+            check=False,
+        )
+        self.log(f"live firewall state:\n{report[-2500:]}")
+
     def launch_calamares(self) -> None:
         # The Debian wrapper moves the live fstab aside because it confuses
         # Calamares' partition module.
         assert self.serial
+        self.report_firewall()
         self.serial.command(
             "if [ -e /etc/fstab ]; then mv /etc/fstab /etc/fstab.orig.calamares; fi",
             timeout=30,
@@ -892,7 +917,7 @@ class InstallerTest:
         )
         self.serial.background(
             "DISPLAY=:0 XAUTHORITY=/root/.Xauthority QT_AUTO_SCREEN_SCALE_FACTOR=1 "
-            "calamares -d >/tmp/calamares.out 2>&1"
+            "QT_QUICK_BACKEND=software calamares -d >/tmp/calamares.out 2>&1"
         )
         time.sleep(10)
         self.dismiss_welcome()
