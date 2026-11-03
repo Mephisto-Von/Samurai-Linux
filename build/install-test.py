@@ -691,20 +691,31 @@ class InstallerTest:
                     output = self.serial.command(
                         f"tail -n 200 {logfile} 2>/dev/null || true", timeout=60
                     )
-                    # The X server dying takes Calamares and KWin with it, and
-                    # its log is the only place that says why.
+                    # The display server dying takes Calamares and KWin with it.
+                    # The live session is Wayland, so there is no Xorg log: the
+                    # compositor's own session log, the journal and any coredump
+                    # are what record the crash.
                     display = self.serial.command(
-                        'dmesg | tail -n 40; for f in /var/log/Xorg.0.log '
-                        '/run/sddm/xorg.log /root/.local/share/sddm/xorg-session.log '
-                        '/home/*/.local/share/sddm/xorg-session.log; do '
+                        'dmesg | tail -n 30; free -m | head -n 3; '
+                        'for f in /var/log/Xorg.0.log /run/sddm/xorg.log '
+                        '/root/.local/share/sddm/*session.log '
+                        '/home/*/.local/share/sddm/*session.log; do '
                         'if [ -r "$f" ]; then echo "--- $f"; tail -n 40 "$f"; fi; done; true',
                         timeout=90,
+                    )
+                    session = self.serial.command(
+                        'journalctl -b --no-pager 2>&1 | grep -iE "kwin|sddm|coredump|oom|'
+                        'out of memory|drm" | tail -n 60; '
+                        'command -v coredumpctl >/dev/null && '
+                        'coredumpctl list --no-pager 2>&1 | tail -n 8; true',
+                        timeout=120,
                     )
                     self.vnc.capture(f"{screenshot}-process-gone.png")
                     raise Failure(
                         f"{process} exited while waiting for {label}; tail of {logfile}:\n"
                         f"{output[-4000:]}\n"
-                        f"display server evidence:\n{display[-4000:]}"
+                        f"display server evidence:\n{display[-3000:]}\n"
+                        f"session evidence:\n{session[-3000:]}"
                     )
             time.sleep(4)
         self.vnc.capture(f"{screenshot}-timeout.png")
@@ -861,9 +872,12 @@ class InstallerTest:
         assert self.serial
         report = self.serial.command(
             "systemctl status nftables --no-pager -l 2>&1 | tail -n 12; "
-            "nft --check --file /etc/nftables.conf 2>&1 | tail -n 12; "
+            "nft --check --file /etc/nftables.conf 2>&1 | tail -n 6; "
+            "uname -r; ls /lib/modules 2>&1 | head -n 4; "
+            "modprobe nf_tables 2>&1; echo modprobe-status=$?; "
+            "nft --check --file /etc/nftables.conf 2>&1 | tail -n 4; "
             "nft list ruleset 2>&1 | head -n 5",
-            timeout=90,
+            timeout=120,
             check=False,
         )
         self.log(f"live firewall state:\n{report[-2500:]}")
