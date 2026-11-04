@@ -211,7 +211,13 @@ export asked gpg for `--fingerprints`, which GnuPG 2.5 removed. The signing step
 reads the fingerprint from `gpg --batch --with-colons --list-keys`, and a smoke
 check runs that same pipeline against `samurai/keys/samurai-release.asc`. Because
 signing failed the ISO artifact was not uploaded, so the install test was skipped
-and still has no green run. The suite
+and still has no green run. The two blockers since then were both found: the live
+image booted a kernel whose modules tree was not in the squashfs, which left the
+QEMU USB tablet without `usbhid` and made every VNC click land nowhere, and that is
+now fixed and gated - the wizard reaches `install started`. What blocks a green run
+today is Calamares 3.3.14 itself, which segfaults about two seconds into job 2 of 39
+("Clearing all temporary mounts"); the driver now notices a dead installer on its
+next poll instead of waiting out the timeout, and reports the core dump with it. The suite
 also reads back the installed security state, exercises `samurai-profile` and
 `samurai-recovery` on the installed system, and runs
 `build/measure-performance.sh` inside a live Plasma session when `--desktop` is

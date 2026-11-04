@@ -44,7 +44,7 @@ it:
 | # | Criterion | Status today |
 | --- | --- | --- |
 | 1 | Bootable ISO generated and validated | build and `verify-iso.sh` run in CI; a green install test is still outstanding |
-| 2 | Installation and first boot tested | automated install test exists and drives Calamares end to end; no green run has been recorded yet |
+| 2 | Installation and first boot tested | the automated install test drives the real wizard to `install started`, but Calamares then segfaults two seconds into its job list, so installation and first boot have never been reached and no green run has been recorded |
 | 3 | KDE Plasma works as the primary desktop | asserted by the desktop phase once it runs |
 | 4 | Kuro and Shiro themes persist and function | asserted by the desktop phase once it runs |
 | 5 | Developer profile usable | `samurai-profile` is tested on the installed system, but the guest has no network so real installs are not exercised |
