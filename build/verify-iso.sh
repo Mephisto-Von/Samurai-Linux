@@ -325,12 +325,20 @@ if [[ -z "$booted_version" ]]; then
 fi
 ((size_matches <= 1)) \
     || die "${size_matches} kernels in the live rootfs are the same size as /live/vmlinuz, so which one the ISO boots cannot be told apart"
-grep -Fq "lib/modules/$booted_version/" "$TMP_DIR/squashfs-modes.tsv" \
+# Both of these run as a single awk pass rather than "grep | grep -q": grep -q
+# leaves as soon as it matches, the upstream grep then dies of SIGPIPE, and
+# pipefail reports the pipeline as failed on an image that passed it (run
+# 41790753113 lost a build that way). $3 is the path, already stripped of its
+# leading "./".
+have_tree=$(awk -F'\t' -v tree="lib/modules/$booted_version/" \
+    'index($3, tree) == 1 { print "yes"; exit }' "$TMP_DIR/squashfs-modes.tsv")
+[ -n "$have_tree" ] \
     || die "the ISO boots $booted_version but the live rootfs has no /lib/modules/$booted_version"
-grep -F "lib/modules/$booted_version/" "$TMP_DIR/squashfs-modes.tsv" \
-    | grep -Fq '/net/netfilter/nf_tables.ko' \
+nftables_module=$(awk -F'\t' -v tree="lib/modules/$booted_version/" -v mod='/net/netfilter/nf_tables.ko' \
+    'index($3, tree) == 1 && index($3, mod) { print $3; exit }' "$TMP_DIR/squashfs-modes.tsv")
+[ -n "$nftables_module" ] \
     || die "the ISO boots $booted_version, whose tree has no nf_tables module: the default-deny ruleset could not load"
-log "the ISO boots $booted_version and the live rootfs carries its modules"
+log "the ISO boots $booted_version and the live rootfs carries its modules, including $nftables_module"
 
 log "Checking installed packages needed by the installer"
 assert_contains var/lib/dpkg/status '^Package: calamares$'
