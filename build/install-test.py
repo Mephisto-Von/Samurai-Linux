@@ -924,11 +924,31 @@ class InstallerTest:
         )
         self.log(f"live firewall state:\n{report[-2500:]}")
 
+    def report_input_devices(self) -> None:
+        """Say whether the guest can see the VNC pointer at all.
+
+        The installer is driven by clicks delivered through QEMU's usb-tablet,
+        and run 41608570457 clicked on Next four times without the page changing
+        on a kernel that could load no module - including usbhid. Whether that is
+        why is answerable from the guest, so ask it instead of guessing.
+        """
+        assert self.serial
+        report = self.serial.command(
+            "dmesg | grep -iE 'usbhid|hid|input:' | tail -n 12; "
+            "echo before:; ls /dev/input 2>&1; "
+            "modprobe usbhid 2>&1; echo usbhid-status=$?; "
+            "echo after:; ls /dev/input 2>&1",
+            timeout=120,
+            check=False,
+        )
+        self.log(f"live input devices:\n{report[-2000:]}")
+
     def launch_calamares(self) -> None:
         # The Debian wrapper moves the live fstab aside because it confuses
         # Calamares' partition module.
         assert self.serial
         self.report_firewall()
+        self.report_input_devices()
         self.serial.command(
             "if [ -e /etc/fstab ]; then mv /etc/fstab /etc/fstab.orig.calamares; fi",
             timeout=30,
