@@ -334,6 +334,8 @@ fi
 # (run 41793293770 was discarded for not knowing that). Compare and report
 # against the merged view, and carry the evidence the failure needs: which
 # trees the image holds at all, and what the booted tree actually contains.
+# >>> live-modules-check (tests/smoke.sh executes these lines against fixture
+# listings, because this block discarded two good ISOs when it was only read)
 modules_summary=$(awk -F'\t' -v tree="lib/modules/$booted_version/" -v mod='/net/netfilter/nf_tables.ko' '
     { p = $3; sub(/^usr\//, "", p) }
     index(p, "lib/modules/") == 1 {
@@ -368,6 +370,7 @@ modules_sample=${modules_rest#*$'\t'}
 [ -n "$nftables_module" ] \
     || die "the ISO boots $booted_version, whose tree has no nf_tables module (its entries include: $modules_sample): the default-deny ruleset could not load"
 log "the ISO boots $booted_version: the live rootfs holds $modules_found of its files, including $nftables_module"
+# <<< live-modules-check
 
 log "Checking installed packages needed by the installer"
 assert_contains var/lib/dpkg/status '^Package: calamares$'

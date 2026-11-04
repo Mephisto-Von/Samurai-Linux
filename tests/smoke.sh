@@ -467,4 +467,59 @@ else
     printf 'skip - gpg not installed, the fingerprint pipeline was not run\n'
 fi
 
+# 25. The check that the ISO's kernel and its modules tree agree has to be run,
+# not read. It discarded two good ISOs while only being looked at: first as
+# `grep | grep -q`, where grep -q leaves on its first match, the upstream grep
+# dies of SIGPIPE and pipefail reports a passed check as a failure (run
+# 41790753113); then as a prefix test on "lib/modules/", which merged-usr makes
+# impossible because the listing says usr/lib/modules (run 41793293770). The
+# shipped lines are extracted between their markers and executed against
+# synthetic listings, so a third layout cannot cost another build.
+live_block="$TMP/live-modules.sh"
+awk '/# >>> live-modules-check/ { on = 1; next }
+     /# <<< live-modules-check/ { on = 0 }
+     on' "$REPO_ROOT/build/verify-iso.sh" > "$live_block"
+[[ -s "$live_block" ]] \
+    || fail "the live modules check in build/verify-iso.sh is not delimited for this test"
+cat > "$TMP/gate-runner.sh" <<'RUNNER'
+#!/bin/bash
+set -euo pipefail
+die() { printf 'DIE: %s\n' "$1" >&2; exit 1; }
+log() { printf 'LOG: %s\n' "$1"; }
+booted_version="$1"
+export TMP_DIR="$PWD"
+source "$2"
+RUNNER
+gate_dir="$TMP/live-gate"
+mkdir -p "$gate_dir"
+listing=$(printf '%s\t%s\t%s\n' \
+    '-rw-r--r--' 'root/root' 'usr/lib/modules/6.12.115+deb13.1-amd64/modules.dep' \
+    '-r--r--r--' 'root/root' 'usr/lib/modules/6.12.115+deb13.1-amd64/kernel/net/netfilter/nf_conntrack.ko.zst' \
+    '-r--r--r--' 'root/root' 'usr/lib/modules/6.12.115+deb13.1-amd64/kernel/net/netfilter/nf_tables.ko.zst' \
+    '-r--r--r--' 'root/root' 'usr/lib/modules/6.12.115+deb13.1-amd64/kernel/drivers/hid/usbhid/usbhid.ko.zst' \
+    '-r--r--r--' 'root/root' 'usr/lib/modules/6.12.107+deb13-amd64/kernel/net/netfilter/nf_tables.ko.zst' \
+    '-rw-r--r--' 'root/root' 'usr/lib/grub/i386-pc/normal.mod')
+run_gate() {
+    printf '%s\n' "$2" > "$gate_dir/squashfs-modes.tsv"
+    (cd "$gate_dir" && bash "$TMP/gate-runner.sh" "$1" "$live_block") 2>&1
+}
+booted='6.12.115+deb13.1-amd64'
+merged=$(printf '%s\t%s\t%s\n' '-rw-r--r--' 'root/root' 'usr/lib/modules/6.12.115+deb13.1-amd64/modules.dep' \
+    '-r--r--r--' 'root/root' 'usr/lib/modules/6.12.115+deb13.1-amd64/kernel/net/netfilter/nf_tables.ko.zst' \
+    '-r--r--r--' 'root/root' 'usr/lib/modules/6.12.107+deb13-amd64/kernel/net/netfilter/nf_tables.ko.zst')
+unmerged=$(printf '%s\n' "$listing" | awk -F'\t' 'BEGIN{OFS="\t"} {sub(/^usr\//, "", $3); print $1, $2, $3}')
+no_tree=$(printf '%s\n' "$listing" | awk -F'\t' 'BEGIN{OFS="\t"} $3 !~ /6\.12\.115/ {print $1, $2, $3}')
+no_module=$(printf '%s\n' "$listing" | awk -F'\t' 'BEGIN{OFS="\t"} $3 !~ /netfilter\/nf_tables\.ko\.zst$/ {print $1, $2, $3}')
+
+out=$(run_gate "$booted" "$merged") || fail "the check rejects a merged-usr image that has the modules: $out"
+assert_contains "$out" 'usr/lib/modules/6.12.115+deb13.1-amd64/kernel/net/netfilter/nf_tables.ko' \
+    "a passing check must name where the module really is"
+out=$(run_gate "$booted" "$unmerged") || fail "the check rejects a listing that names lib/modules directly: $out"
+out=$(run_gate "$booted" "$no_tree") && fail "the check accepts an image with no modules tree for its kernel"
+assert_contains "$out" 'no modules tree' "a missing tree must be reported as such"
+assert_contains "$out" '6.12.107+deb13-amd64' "a missing tree must say which trees the image does hold"
+out=$(run_gate "$booted" "$no_module") && fail "the check accepts a tree with no nf_tables module"
+assert_contains "$out" 'nf_tables module' "a missing module must be reported as such"
+ok "the live kernel/modules check runs on both layouts and reports what it saw"
+
 printf '\nAll %d smoke checks passed.\n' "$pass"
