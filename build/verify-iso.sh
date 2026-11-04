@@ -325,20 +325,49 @@ if [[ -z "$booted_version" ]]; then
 fi
 ((size_matches <= 1)) \
     || die "${size_matches} kernels in the live rootfs are the same size as /live/vmlinuz, so which one the ISO boots cannot be told apart"
-# Both of these run as a single awk pass rather than "grep | grep -q": grep -q
-# leaves as soon as it matches, the upstream grep then dies of SIGPIPE, and
-# pipefail reports the pipeline as failed on an image that passed it (run
-# 41790753113 lost a build that way). $3 is the path, already stripped of its
-# leading "./".
-have_tree=$(awk -F'\t' -v tree="lib/modules/$booted_version/" \
-    'index($3, tree) == 1 { print "yes"; exit }' "$TMP_DIR/squashfs-modes.tsv")
-[ -n "$have_tree" ] \
-    || die "the ISO boots $booted_version but the live rootfs has no /lib/modules/$booted_version"
-nftables_module=$(awk -F'\t' -v tree="lib/modules/$booted_version/" -v mod='/net/netfilter/nf_tables.ko' \
-    'index($3, tree) == 1 && index($3, mod) { print $3; exit }' "$TMP_DIR/squashfs-modes.tsv")
+# One awk pass answers both questions, because a pipeline cannot be trusted
+# here: grep -q leaves as soon as it matches, the upstream grep then dies of
+# SIGPIPE, and pipefail reports the pipeline as failed on an image that passed
+# it (run 41790753113 lost a build that way). $3 is the path with its leading
+# "./" already stripped; the live rootfs is merged-usr, so the modules live
+# under usr/lib/modules and only reach /lib/modules through the root symlink
+# (run 41793293770 was discarded for not knowing that). Compare and report
+# against the merged view, and carry the evidence the failure needs: which
+# trees the image holds at all, and what the booted tree actually contains.
+modules_summary=$(awk -F'\t' -v tree="lib/modules/$booted_version/" -v mod='/net/netfilter/nf_tables.ko' '
+    { p = $3; sub(/^usr\//, "", p) }
+    index(p, "lib/modules/") == 1 {
+        version = p
+        sub(/^lib\/modules\//, "", version)
+        sub(/\/.*/, "", version)
+        if (!(version in seen)) {
+            seen[version] = 1
+            trees = trees (trees == "" ? "" : ", ") version
+        }
+    }
+    index(p, tree) == 1 {
+        count++
+        if (module == "" && index(p, mod)) module = $3
+        if (shown < 3) {
+            shown++
+            sample = sample (sample == "" ? "" : ", ") $3
+        }
+    }
+    END { print count + 0 "\t" module "\t" trees "\t" sample }' "$TMP_DIR/squashfs-modes.tsv")
+# Split on the tab by hand: read would treat it as IFS whitespace and collapse
+# an empty field, so a tree without the module would report the module path
+# that the field after it happens to hold.
+modules_found=${modules_summary%%$'\t'*}
+modules_rest=${modules_summary#*$'\t'}
+nftables_module=${modules_rest%%$'\t'*}
+modules_rest=${modules_rest#*$'\t'}
+modules_trees=${modules_rest%%$'\t'*}
+modules_sample=${modules_rest#*$'\t'}
+((modules_found > 0)) \
+    || die "the ISO boots $booted_version but the live rootfs has no modules tree for it (the image holds: ${modules_trees:-none}): the kernel would load no driver"
 [ -n "$nftables_module" ] \
-    || die "the ISO boots $booted_version, whose tree has no nf_tables module: the default-deny ruleset could not load"
-log "the ISO boots $booted_version and the live rootfs carries its modules, including $nftables_module"
+    || die "the ISO boots $booted_version, whose tree has no nf_tables module (its entries include: $modules_sample): the default-deny ruleset could not load"
+log "the ISO boots $booted_version: the live rootfs holds $modules_found of its files, including $nftables_module"
 
 log "Checking installed packages needed by the installer"
 assert_contains var/lib/dpkg/status '^Package: calamares$'
