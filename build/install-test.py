@@ -1055,21 +1055,41 @@ class InstallerTest:
         # A real user starts the installer from the desktop, inside the Plasma
         # session's own bus where kded6 has been running since login, so borrow
         # that bus instead of inventing one; dbus-run-session is only a fallback.
+        # Which desktop is actually running matters: run 41892892060 looked for
+        # plasmashell owned by "samurai" and found nobody, so it fell back to a
+        # private bus and died in the automount job again (the journal said
+        # "dbus-daemon[1365]: [session uid=0 ...]", a bus started for the
+        # installer rather than the one the session logged into).
+        desktop = self.serial.command(
+            "ls /run/user/ 2>/dev/null | tr '\\n' ' '; "
+            "pid=$(pgrep -f plasmashell | head -n1); "
+            "echo \"plasmashell=${pid:-none}\"; "
+            "[ -n \"$pid\" ] && stat -c 'plasmashell uid=%u' \"/proc/$pid\"; "
+            "[ -S /run/user/1000/bus ] && echo 'user bus socket=present' || echo 'user bus socket=absent'",
+            timeout=60,
+            check=False,
+        )
+        self.log("live desktop: " + " | ".join(line for line in desktop.splitlines() if line.strip()))
         self.serial.background(
             "DISPLAY=:0 XAUTHORITY=/root/.Xauthority QT_AUTO_SCREEN_SCALE_FACTOR=1 "
             "QT_QUICK_BACKEND=software sh -c '"
-            'pid=$(pgrep -u samurai -f plasmashell | head -n1); '
-            'bus=$(tr "\\0" "\\n" < /proc/${pid:-1}/environ 2>/dev/null '
-            '| sed -n "s/^DBUS_SESSION_BUS_ADDRESS=//p" | head -n1); '
-            'if [ -n "$bus" ]; then echo "SAMURAI_DBUS=session:$bus"; '
-            'export DBUS_SESSION_BUS_ADDRESS="$bus"; exec calamares -d; '
+            'userbus=unix:path=/run/user/1000/bus; '
+            'if [ -S "$userbus" ] && DBUS_SESSION_BUS_ADDRESS="$userbus" '
+            'busctl --no-pager --user list >/dev/null 2>&1; then '
+            'echo "SAMURAI_DBUS=plasma:$userbus"; export DBUS_SESSION_BUS_ADDRESS="$userbus"; '
+            'exec calamares -d; '
             'elif command -v dbus-run-session >/dev/null 2>&1; then '
-            'echo SAMURAI_DBUS=session:private; exec dbus-run-session -- calamares -d; '
+            'echo SAMURAI_DBUS=private; exec dbus-run-session -- calamares -d; '
             'else echo SAMURAI_DBUS=none; exec calamares -d; fi\' >/tmp/calamares.out 2>&1'
         )
         time.sleep(10)
-        tail = self.serial.command("tail -n 30 /tmp/calamares.out 2>/dev/null || true", timeout=30)
-        bus_choice = re.search(r"SAMURAI_DBUS=(\S+)", tail)
+        # The marker is the first line the launcher writes, so read the head:
+        # reading the tail hid it behind Calamares' own startup output and run
+        # 41892892060 logged "not reported" for a fallback that had in fact run.
+        head = self.serial.command(
+            "head -n 3 /tmp/calamares.out 2>/dev/null || true", timeout=30, check=False
+        )
+        bus_choice = re.search(r"SAMURAI_DBUS=(\S+)", head)
         self.log(f"Calamares session bus: {bus_choice.group(1) if bus_choice else 'not reported'}")
         self.dismiss_welcome()
         running = self.serial.command("pgrep -x calamares >/dev/null && echo yes || echo no", timeout=30)
