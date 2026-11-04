@@ -871,6 +871,9 @@ class InstallerTest:
                 "command -v coredumpctl >/dev/null && coredumpctl info calamares 2>&1 "
                 "| tail -n 80 || echo 'no coredumpctl in the live image'",
             ),
+            # An empty filtered dmesg only means something next to the raw tail:
+            # run 41830599254 segfaulted with no matching kernel line at all.
+            ("tail of dmesg", "dmesg | tail -n 12 || true"),
             ("recorded crashes", "ls -l /var/crash /var/lib/systemd/coredump 2>/dev/null || true"),
             (
                 "session log tail",
@@ -1044,13 +1047,26 @@ class InstallerTest:
             timeout=30,
             check=False,
         )
+        # Calamares 3.3.14's partition module asks KDE Solid about automounting,
+        # and Solid has no null guard for a missing session bus: runs
+        # 41802792291 and 41830599254 both segfaulted a few seconds into the job
+        # list, right after "Not connected to D-Bus server". A real user starts
+        # the installer from Plasma, which always has a bus, so the harness has
+        # to provide one too rather than launch Calamares from a bare tty.
         self.serial.background(
             "DISPLAY=:0 XAUTHORITY=/root/.Xauthority QT_AUTO_SCREEN_SCALE_FACTOR=1 "
-            "QT_QUICK_BACKEND=software calamares -d >/tmp/calamares.out 2>&1"
+            "QT_QUICK_BACKEND=software sh -c '"
+            "if command -v dbus-run-session >/dev/null 2>&1; then "
+            "echo SAMURAI_DBUS=session; exec dbus-run-session -- calamares -d; "
+            "else echo SAMURAI_DBUS=none; exec calamares -d; fi' >/tmp/calamares.out 2>&1"
         )
         time.sleep(10)
-        self.dismiss_welcome()
         tail = self.serial.command("tail -n 30 /tmp/calamares.out 2>/dev/null || true", timeout=30)
+        if "SAMURAI_DBUS=none" in tail:
+            self.log("the live image has no dbus-run-session; Calamares runs without a session bus")
+        else:
+            self.log("Calamares started inside its own session D-Bus")
+        self.dismiss_welcome()
         running = self.serial.command("pgrep -x calamares >/dev/null && echo yes || echo no", timeout=30)
         if running.strip() != "yes":
             raise Failure(f"Calamares is not running; output:\n{tail}")
