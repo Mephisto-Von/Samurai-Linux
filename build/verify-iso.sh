@@ -287,27 +287,50 @@ awk '{ ts = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9] "
 [[ -s "$TMP_DIR/squashfs-modes.tsv" ]] || die "the squashfs listing contains no file records"
 
 live_kernel_hash=$(sha256sum "$TMP_DIR/vmlinuz" | cut -d' ' -f1)
+live_kernel_size=$(stat -c %s "$TMP_DIR/vmlinuz")
+printf '==> /live/vmlinuz is %s bytes, sha256 %s\n' "$live_kernel_size" "$live_kernel_hash"
+awk '{ ts = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9] "
+    if (!match($0, ts)) next
+    name = substr($0, RSTART + RLENGTH)
+    sub(/^\.\//, "", name)
+    if (name !~ /^boot\/vmlinuz-/) next
+    print $3 "\t" name
+}' "$TMP_DIR/squashfs-listing.txt" > "$TMP_DIR/boot-kernels.tsv"
+[[ -s "$TMP_DIR/boot-kernels.tsv" ]] \
+    || die "the live rootfs has no /boot/vmlinuz-* to compare /live/vmlinuz against"
+
 booted_version=""
-while IFS= read -r candidate; do
-    [[ -n "$candidate" ]] || continue
-    unsquashfs -f -no-progress -d "$ROOT" "$candidate" >/dev/null 2>&1 || continue
-    if [[ $(sha256sum "$ROOT/$candidate" | cut -d' ' -f1) == "$live_kernel_hash" ]]; then
+size_matches=0
+while IFS=$'\t' read -r candidate_size candidate; do
+    if ! unsquashfs -f -no-progress -d "$ROOT" "$SQUASHFS" "$candidate" >/dev/null 2>&1; then
+        printf '    %s: unsquashfs could not extract it\n' "$candidate" >&2
+        continue
+    fi
+    candidate_hash=$(sha256sum "$ROOT/$candidate" | cut -d' ' -f1)
+    printf '    %s: %s bytes, sha256 %s\n' "$candidate" "$candidate_size" "$candidate_hash" >&2
+    if [[ "$candidate_hash" == "$live_kernel_hash" ]]; then
         booted_version="${candidate##*/vmlinuz-}"
         break
     fi
-done < <(awk -F'\t' '$3 ~ /^boot\/vmlinuz-/ { print $3 }' "$TMP_DIR/squashfs-modes.tsv")
+    if [[ "$candidate_size" == "$live_kernel_size" ]]; then
+        # A byte-for-byte copy is not guaranteed: live-build owns what it puts in
+        # /live. A size match still names the version, as long as only one kernel
+        # has that size - two would be indistinguishable.
+        booted_version="${candidate##*/vmlinuz-}"
+        size_matches=$((size_matches + 1))
+    fi
+done < "$TMP_DIR/boot-kernels.tsv"
 if [[ -z "$booted_version" ]]; then
-    printf '%s\n' "kernels in the live rootfs:" >&2
-    awk -F'\t' '$3 ~ /^boot\/vmlinuz-/ { print "  /" $3 }' "$TMP_DIR/squashfs-modes.tsv" >&2
-    die "/live/vmlinuz is not any kernel in the live rootfs: the ISO would boot a kernel whose modules are not in the image"
+    die "/live/vmlinuz is not any kernel in the live rootfs (sizes and hashes above): the ISO would boot a kernel whose modules are not in the image"
 fi
+((size_matches <= 1)) \
+    || die "${size_matches} kernels in the live rootfs are the same size as /live/vmlinuz, so which one the ISO boots cannot be told apart"
 grep -Fq "lib/modules/$booted_version/" "$TMP_DIR/squashfs-modes.tsv" \
     || die "the ISO boots $booted_version but the live rootfs has no /lib/modules/$booted_version"
 grep -F "lib/modules/$booted_version/" "$TMP_DIR/squashfs-modes.tsv" \
     | grep -Fq '/net/netfilter/nf_tables.ko' \
     || die "the ISO boots $booted_version, whose tree has no nf_tables module: the default-deny ruleset could not load"
 log "the ISO boots $booted_version and the live rootfs carries its modules"
-
 
 log "Checking installed packages needed by the installer"
 assert_contains var/lib/dpkg/status '^Package: calamares$'
@@ -339,8 +362,8 @@ assert_contains usr/local/bin/samurai-recovery '^cmd_snapshot\(\) \{$'
 # replaced with the final ones. Checked per file, because /etc/apt as a whole
 # would also match the pin in preferences.d, which proves nothing about a
 # configured source.
-unsquashfs -f -no-progress -d "$ROOT" etc/apt/sources.list >/dev/null 2>&1 || true
-unsquashfs -f -no-progress -d "$ROOT" etc/apt/sources.list.d >/dev/null 2>&1 || true
+unsquashfs -f -no-progress -d "$ROOT" "$SQUASHFS" etc/apt/sources.list >/dev/null 2>&1 || true
+unsquashfs -f -no-progress -d "$ROOT" "$SQUASHFS" etc/apt/sources.list.d >/dev/null 2>&1 || true
 sources_found=0
 sources_named=()
 for source in "$ROOT/etc/apt/sources.list" "$ROOT/etc/apt/sources.list.d"/*.list \
@@ -365,7 +388,6 @@ fi
 if ((sources_found > 1)); then
     die "the security archive is configured ${sources_found} times: ${sources_named[*]}"
 fi
-
 log "Checking the permissions the image records for those files"
 # $TMP_DIR/squashfs-modes.tsv, built above, is the squashfs metadata listing.
 image_mode_problems=()
