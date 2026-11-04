@@ -1048,24 +1048,29 @@ class InstallerTest:
             check=False,
         )
         # Calamares 3.3.14's partition module asks KDE Solid about automounting,
-        # and Solid has no null guard for a missing session bus: runs
-        # 41802792291 and 41830599254 both segfaulted a few seconds into the job
-        # list, right after "Not connected to D-Bus server". A real user starts
-        # the installer from Plasma, which always has a bus, so the harness has
-        # to provide one too rather than launch Calamares from a bare tty.
+        # and that path has segfaulted in every run so far: with no session bus
+        # at all (41802792291, 41830599254, right after "Not connected to D-Bus
+        # server") and with a private bus that had to cold-start kded6
+        # (41833873221, "Activating service name='org.kde.kded6'" then signal 11).
+        # A real user starts the installer from the desktop, inside the Plasma
+        # session's own bus where kded6 has been running since login, so borrow
+        # that bus instead of inventing one; dbus-run-session is only a fallback.
         self.serial.background(
             "DISPLAY=:0 XAUTHORITY=/root/.Xauthority QT_AUTO_SCREEN_SCALE_FACTOR=1 "
             "QT_QUICK_BACKEND=software sh -c '"
-            "if command -v dbus-run-session >/dev/null 2>&1; then "
-            "echo SAMURAI_DBUS=session; exec dbus-run-session -- calamares -d; "
-            "else echo SAMURAI_DBUS=none; exec calamares -d; fi' >/tmp/calamares.out 2>&1"
+            'pid=$(pgrep -u samurai -f plasmashell | head -n1); '
+            'bus=$(tr "\\0" "\\n" < /proc/${pid:-1}/environ 2>/dev/null '
+            '| sed -n "s/^DBUS_SESSION_BUS_ADDRESS=//p" | head -n1); '
+            'if [ -n "$bus" ]; then echo "SAMURAI_DBUS=session:$bus"; '
+            'export DBUS_SESSION_BUS_ADDRESS="$bus"; exec calamares -d; '
+            'elif command -v dbus-run-session >/dev/null 2>&1; then '
+            'echo SAMURAI_DBUS=session:private; exec dbus-run-session -- calamares -d; '
+            'else echo SAMURAI_DBUS=none; exec calamares -d; fi\' >/tmp/calamares.out 2>&1'
         )
         time.sleep(10)
         tail = self.serial.command("tail -n 30 /tmp/calamares.out 2>/dev/null || true", timeout=30)
-        if "SAMURAI_DBUS=none" in tail:
-            self.log("the live image has no dbus-run-session; Calamares runs without a session bus")
-        else:
-            self.log("Calamares started inside its own session D-Bus")
+        bus_choice = re.search(r"SAMURAI_DBUS=(\S+)", tail)
+        self.log(f"Calamares session bus: {bus_choice.group(1) if bus_choice else 'not reported'}")
         self.dismiss_welcome()
         running = self.serial.command("pgrep -x calamares >/dev/null && echo yes || echo no", timeout=30)
         if running.strip() != "yes":
