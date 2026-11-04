@@ -37,6 +37,24 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
 LOG_BEGIN = "__SAMURAI_LOG_BEGIN__"
 LOG_END = "__SAMURAI_LOG_END__"
 
+# OCR of Calamares' own words, lowercased and with the whitespace collapsed.
+FINISHED_WORDS = (
+    "all done",
+    "installation complete",
+    "installation finished",
+    "install complete",
+    "install finished",
+    "your new system",
+    "restart now",
+    "reboot now",
+)
+CRASH_WORDS = (
+    "closed unexpectedly",
+    "crash handler",
+    "segmentation fault",
+    "calamares closed",
+)
+
 
 class Failure(RuntimeError):
     pass
@@ -833,6 +851,41 @@ class InstallerTest:
                 return int(line.strip())
         return 0
 
+    def crash_evidence(self) -> str:
+        """Gather whatever the guest knows about the installer dying.
+
+        The crash dialog gives the signal and a PID but no stack, and a
+        segfaulting Calamares leaves its session log frozen mid-job, so the
+        backtrace has to come from the core dump or the kernel's own report.
+        """
+        assert self.serial
+        probes = (
+            ("tail of /tmp/calamares.out", "tail -n 120 /tmp/calamares.out 2>/dev/null || true"),
+            (
+                "kernel report",
+                "dmesg | grep -iE 'segfault|general protection|traps|killed process|"
+                "out of memory' | tail -n 20 || true",
+            ),
+            (
+                "core dump",
+                "command -v coredumpctl >/dev/null && coredumpctl info calamares 2>&1 "
+                "| tail -n 80 || echo 'no coredumpctl in the live image'",
+            ),
+            ("recorded crashes", "ls -l /var/crash /var/lib/systemd/coredump 2>/dev/null || true"),
+            (
+                "session log tail",
+                "tail -n 40 /root/.cache/calamares/session.log 2>/dev/null || true",
+            ),
+        )
+        chunks = []
+        for label, probe in probes:
+            try:
+                output = self.serial.command(probe, timeout=180, check=False)
+            except Failure as exc:
+                output = f"(could not read: {exc})"
+            chunks.append(f"--- {label}\n{output.strip()}")
+        return "\n".join(chunks)
+
     def start_install(self) -> None:
         """Start the install without guessing the Install button by OCR.
 
@@ -1063,6 +1116,14 @@ class InstallerTest:
         self.log("installation started; waiting for the finished page")
         deadline = time.time() + self.timeout
         attempt = 0
+        # A silent session log is not evidence of a dead installer: under TCG the
+        # packages and unpackfs jobs run for many minutes without printing
+        # anything. What makes an idle log fatal is nobody left alive to fill it,
+        # so the poll also asks whether calamares is still a process. Run
+        # 41802792291 segfaulted two seconds into job 2 of 39 and this loop
+        # watched the corpse for 91 minutes before reporting pixels.
+        last_size = self.calamares_log_size()
+        stalled = 0
         while time.time() < deadline:
             attempt += 1
             time.sleep(15)
@@ -1075,11 +1136,12 @@ class InstallerTest:
                 assert self.serial
                 state = self.serial.command(
                     "log=/root/.cache/calamares/session.log; "
-                    "if grep -q 'completion: succeeded' \"$log\" 2>/dev/null; then "
-                    "echo SAMURAI_INSTALL_DONE; "
+                    "if grep -q 'completion: succeeded' \"$log\" 2>/dev/null; then s=DONE; "
                     "elif grep -qE 'Installation failed|External command finished with errors' "
-                    "\"$log\" 2>/dev/null; then echo SAMURAI_INSTALL_FAILED; "
-                    "else echo SAMURAI_INSTALL_RUNNING; fi",
+                    "\"$log\" 2>/dev/null; then s=FAILED; else s=RUNNING; fi; "
+                    "pgrep -x calamares >/dev/null && a=yes || a=no; "
+                    "printf 'SAMURAI_STATE=%s ALIVE=%s SIZE=%s\\n' "
+                    "\"$s\" \"$a\" \"$(wc -c <\"$log\" 2>/dev/null || echo 0)\"",
                     timeout=90,
                     check=False,
                 )
@@ -1088,12 +1150,12 @@ class InstallerTest:
             state = state.strip()
             if state:
                 self.log(f"calamares state: {state} (poll {attempt})")
-            if "SAMURAI_INSTALL_DONE" in state:
+            if "SAMURAI_STATE=DONE" in state:
                 self.vnc.wake()
                 self.vnc.capture("08-finished.png")
                 self.log("Calamares reported completion: succeeded")
                 return
-            if "SAMURAI_INSTALL_FAILED" in state:
+            if "SAMURAI_STATE=FAILED" in state:
                 self.vnc.wake()
                 self.vnc.capture("08-failure.png")
                 tail = self.serial.command(
@@ -1105,27 +1167,47 @@ class InstallerTest:
                     "Calamares reported an installation failure; session log tail:\n"
                     + "\n".join(tail.splitlines()[-40:])
                 )
-            if attempt % 8 == 0:
-                # Keep one screenshot every couple of minutes as evidence.
+            alive = re.search(r"ALIVE=(\w+)", state)
+            size_match = re.search(r"SIZE=(\d+)", state)
+            if size_match:
+                size = int(size_match.group(1))
+                stalled = stalled + 1 if size == last_size else 0
+                last_size = size
+            if alive and alive.group(1) == "no":
+                # The installer is gone. Either it finished without the log
+                # saying so, or it died; only the second is a failure.
+                self.vnc.wake()
+                image = self.vnc.capture(f"07-installer-gone-{attempt:02d}.png")
+                text = re.sub(r"\s+", " ", self.ocr_text(image).lower())
+                if not any(x in text for x in FINISHED_WORDS):
+                    raise Failure(
+                        "the calamares process exited before the install finished "
+                        f"(poll {attempt}, session log {last_size} bytes, screen reads "
+                        f"{text[-120:]!r})\n" + self.crash_evidence()
+                    )
+                self.vnc.capture("08-finished.png")
+                self.log(f"Calamares exited on the finished page: {text[-100:]}")
+                return
+            if attempt % 8 == 0 or stalled >= 20:
+                # Keep one screenshot every couple of minutes as evidence, and
+                # look sooner once the log has been silent for five minutes.
                 self.vnc.wake()
                 image = self.vnc.capture(f"07-progress-{attempt:02d}.png")
                 text = re.sub(r"\s+", " ", self.ocr_text(image).lower())
-                if any(
-                    x in text
-                    for x in [
-                        "all done",
-                        "installation complete",
-                        "installation finished",
-                        "install complete",
-                        "install finished",
-                        "your new system",
-                        "restart now",
-                        "reboot now",
-                    ]
-                ):
+                if any(x in text for x in CRASH_WORDS):
+                    raise Failure(
+                        "Calamares crashed during the install; the screen reads "
+                        f"{text[-200:]!r} (see {image})\n" + self.crash_evidence()
+                    )
+                if any(x in text for x in FINISHED_WORDS):
                     self.vnc.capture("08-finished.png")
                     self.log(f"Calamares reached the finished page: {text[-100:]}")
                     return
+                if stalled >= 20:
+                    self.log(
+                        f"session log has not grown for {stalled} polls; the screen "
+                        "shows no crash dialog, so this is treated as a slow job"
+                    )
         self.vnc.wake()
         self.vnc.capture("08-timeout.png")
         raise Failure("timed out waiting for Calamares to finish")
