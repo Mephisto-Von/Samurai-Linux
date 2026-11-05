@@ -1188,7 +1188,8 @@ class InstallerTest:
         out = self.serial.command(
             "for p in $(pgrep -x Xorg 2>/dev/null); do "
             "tr '\\0' '\\n' < \"/proc/$p/cmdline\" 2>/dev/null; done "
-            "| grep -E -m1 '^:[0-9]+$' || true",
+            "| grep -E -m1 '^:[0-9]+$'; "
+            "ls -t /tmp/.X11-unix/X* 2>/dev/null | head -n1 | sed -n 's|.*X|:|p'",
             timeout=60,
             check=False,
         )
@@ -1200,36 +1201,44 @@ class InstallerTest:
     def start_x11_session(self, session: str) -> bool:
         """Start the X11 Plasma session by hand when SDDM's autologin did not.
 
-        Run 42105485811 is the first run that got this far with the compositor
-        installed: Xorg was alive, logind called the session Type=x11 and active,
-        /usr/bin/kwin_x11 existed, and neither startplasma-x11 nor kwin_x11 was
-        in the process table - so the session file was selected and its program
-        never ran, or ran and exited before forking anything the poll could see.
-        The X server is therefore not the problem and the compositor binary is
-        not missing; what is missing is the session's own program. Run exactly
-        what the session file says to run, as the user SDDM logged in, on the
-        display the running Xorg serves, and keep everything it prints.
+        Run 42112234958 shows what "the X11 session came up with no compositor"
+        really was: the autologin drop-in was ignored, SDDM started the Wayland
+        session anyway, that session exited ten seconds later, and SDDM then
+        removed the display and added a new one on VT3 for its **greeter** - an
+        X server with a login screen and nobody logged in, which is what the
+        earlier cycle read as "Type=x11, active, no kwin_x11". If the patched
+        configuration still does not autologin, the test's remaining option is
+        to log in itself: run exactly what the session file says to run, as the
+        user the image logs in automatically, on the display that X server
+        serves, and keep everything it prints.
 
         A success here says the installer was tested on an X11 desktop the
-        harness started rather than one SDDM autologin started; a failure says
-        startplasma-x11 cannot come up in the live image at all. Both are worth
-        more than this method's absence, which only ever produced "x11=no".
+        harness started rather than one the image started by itself; a failure
+        says startplasma-x11 cannot come up in the live image at all. Either is
+        more informative than the "x11=no" this method replaced.
         """
         assert self.serial
         if not re.fullmatch(r"[A-Za-z0-9._-]+", session):
             self.log(f"refusing to start session with the unusable name {session!r}")
             return False
         session_file = shlex.quote(f"/usr/share/xsessions/{session}.desktop")
+        # The display cannot be read out of the X server's environment: run
+        # 42112234958 showed SDDM starting it as "/usr/bin/X ... -displayfd 17",
+        # which hands the number back over a file descriptor and stores it
+        # nowhere. The socket in /tmp/.X11-unix is what is left, so that is what
+        # names the display.
+        display = self.live_x_display()
         info = self.serial.command(
-            "xp=$(pgrep -x Xorg 2>/dev/null | head -n1); "
-            "disp=; xa=; exec_line=; "
+            "xp=$(pgrep -x Xorg 2>/dev/null | head -n1); xa=; exec_line=; "
             'if [ -n "$xp" ]; then '
-            "disp=$(tr '\\0' '\\n' < \"/proc/$xp/cmdline\" 2>/dev/null | grep -E -m1 '^:[0-9]+$'); "
             "xa=$(tr '\\0' '\\n' < \"/proc/$xp/environ\" 2>/dev/null "
             "| sed -n 's/^XAUTHORITY=//p' | head -n1); fi; "
+            'if [ -z "$xa" ] || [ ! -r "$xa" ]; then '
+            "xa=$(ls -t /run/sddm/xauth_* /home/samurai/.Xauthority /run/user/1000/xauth_* "
+            "2>/dev/null | head -n1); fi; "
             "exec_line=$(sed -n 's/^Exec=//p' " + session_file + " | head -n1); "
             'printf "xorg=%s\\ndisplay=%s\\ncookie=%s\\nexec=%s\\n" '
-            '"${xp:-none}" "${disp:-none}" "${xa:-none}" "${exec_line:-none}"',
+            '"${xp:-none}" ' + shlex.quote(display) + ' "${xa:-none}" "${exec_line:-none}"',
             timeout=60,
             check=False,
         )
@@ -1238,11 +1247,11 @@ class InstallerTest:
             key, sep, value = line.partition("=")
             if sep:
                 fields[key.strip()] = value.strip()
-        display, cookie = fields.get("display", "none"), fields.get("cookie", "none")
+        display, cookie = fields.get("display", ":0"), fields.get("cookie", "none")
         program = fields.get("exec", "none")
         self.log(f"X11 session by hand: {' '.join(info.split())}")
-        if display == "none" or program == "none":
-            self.log("there is no X server or no session Exec to start the session on")
+        if program == "none":
+            self.log("the X11 session file has no Exec to run")
             return False
         env = f"HOME=/home/samurai DISPLAY={shlex.quote(display)} XDG_SESSION_TYPE=x11"
         if cookie != "none":
@@ -1264,6 +1273,11 @@ class InstallerTest:
         self.serial.command(f"chmod 0755 {shlex.quote(wrapper)}", timeout=30, check=False)
         self.serial.command(
             "rm -f /tmp/samurai-startplasma.out; "
+            # The display this lands on is usually SDDM's greeter X, and a
+            # greeter drawing a login screen over the installer would make
+            # every screenshot below meaningless. SDDM started that server with
+            # -noreset, so the client can go and the server stay.
+            "pkill -x sddm-greeter >/dev/null 2>&1 || true; "
             f"setsid sudo -u samurai env {env} XDG_RUNTIME_DIR=/run/user/1000 "
             f"sh {shlex.quote(wrapper)} >/tmp/samurai-startplasma.out 2>&1 "
             "< /dev/null & echo started=$!",
@@ -1281,6 +1295,70 @@ class InstallerTest:
         )
         self.log("X11 session started by hand: " + " | ".join(line for line in back.splitlines() if line.strip()))
         return "x11=yes" in back
+
+    def x11_autologin(self, session: str) -> None:
+        """Aim whatever SDDM calls autologin at the X11 session.
+
+        The drop-in alone is not the answer. Run 42112234958 restarted SDDM with
+        /etc/sddm.conf.d/99-install-test-x11.conf holding Session=plasmax11 and
+        the journal still said "Starting Wayland user session: ...
+        /usr/bin/startplasma-wayland"; ten seconds later that session exited
+        cleanly, SDDM removed the display and added a new one on VT3 running
+        "/usr/bin/X ... -displayfd 17" for its **greeter**. That is the whole of
+        what the previous cycle read as "an X11 session with no compositor in
+        it": Xorg was SDDM's greeter X, nobody had logged in, and the autologin
+        request had been ignored.
+
+        So disable every Session= key the image already carries - SDDM's schema
+        only uses that name under [Autologin] - and state the request once more
+        in a file named to sort after any the image ships. Which of those two is
+        the one SDDM obeys is not established from upstream documentation, so
+        the configuration is printed before it is touched: nothing in this
+        project has ever read the live image's autologin settings back, and they
+        are the reason two cycles in a row ended where they did.
+        """
+        assert self.serial
+        dump = self.serial.command(
+            "echo 'sddm configuration files:'; ls -l /etc/sddm.conf /etc/sddm.conf.d/ 2>&1; "
+            "for f in /etc/sddm.conf /etc/sddm.conf.d/*.conf; do "
+            '[ -f "$f" ] || continue; echo "== $f"; cat "$f"; done 2>&1; '
+            "echo 'live autologin mechanism:'; grep -R -n -i 'autologin' /etc/sddm.conf "
+            "/etc/sddm.conf.d /etc/live 2>/dev/null | head -n 12; "
+            "cat /proc/cmdline 2>&1",
+            timeout=60,
+            check=False,
+        )
+        self.log("SDDM configuration before the test changed it:\n" + dump[-3500:])
+        script = "/tmp/samurai-x11-autologin.sh"
+        self.serial.write_file(
+            script,
+            "#!/bin/sh\n"
+            "# Written by build/install-test.py; points SDDM's autologin at X11.\n"
+            "#\n"
+            "# SDDM resolves an autologin request from /etc/sddm.conf together\n"
+            "# with the drop-in directory, and whatever the live image configures\n"
+            "# there outvoted a test file named 99-...: run 42112234958 left that\n"
+            "# file holding Session=plasmax11 and the journal still logged the\n"
+            "# Wayland session. Rather than guess which file wins, disable every\n"
+            "# other Session= key - SDDM's schema only uses that name under\n"
+            "# [Autologin] - and state the request once more, at the end of the\n"
+            "# alphabet.\n"
+            "set -eu\n"
+            "for f in /etc/sddm.conf /etc/sddm.conf.d/*.conf; do\n"
+            '    [ -f "$f" ] || continue\n'
+            '    grep -qE "^[[:space:]]*[Ss]ession[[:space:]]*=" "$f" || continue\n'
+            '    cp -a "$f" "$f.orig.install-test" 2>/dev/null || true\n'
+            "    sed -E -i 's/^([[:space:]]*)([Ss]ession[[:space:]]*=.*)$/\\1# \\2/' \"$f\"\n"
+            "    printf 'disabled the Session= keys in %s\\n' \"$f\"\n"
+            "done\n",
+        )
+        answer = self.serial.command(f"sh {shlex.quote(script)}", timeout=60, check=False)
+        self.log("SDDM autologin patch: " + " | ".join(line for line in answer.splitlines() if line.strip()))
+        self.serial.command("mkdir -p /etc/sddm.conf.d", timeout=30)
+        self.serial.write_file(
+            "/etc/sddm.conf.d/zz-install-test-x11.conf",
+            f"[Autologin]\nUser=samurai\nSession={session}\n",
+        )
 
     def ensure_x11_live_session(self) -> None:
         """Move the live session from KWin on Wayland to KWin on X11.
@@ -1322,11 +1400,7 @@ class InstallerTest:
         # SDDM matches [Autologin] Session against the session name, not the
         # file name, so the ".desktop" suffix has to go.
         session = Path(files[0]).name.removesuffix(".desktop")
-        self.serial.command("mkdir -p /etc/sddm.conf.d", timeout=30)
-        self.serial.write_file(
-            "/etc/sddm.conf.d/99-install-test-x11.conf",
-            f"[Autologin]\nUser=samurai\nSession={session}\n",
-        )
+        self.x11_autologin(session)
         self.log(f"restarting SDDM into the X11 session {session!r} for this test")
         self.serial.command("systemctl restart sddm", timeout=180, check=False)
         back = self.serial.command(
@@ -1334,8 +1408,11 @@ class InstallerTest:
             "sleep 2; i=$((i+1)); done; "
             "echo waited_halves=$i; pgrep -x kwin_x11 >/dev/null 2>&1 "
             "&& echo x11=yes || echo x11=no; "
+            "echo 'what sddm started:'; journalctl -b -u sddm --no-pager 2>&1 "
+            "| grep -E 'Starting (X11|Wayland) user session|Greeter starting|Session started' "
+            "| tail -n 4; "
             "loginctl --no-pager list-sessions 2>&1 | head -n 4",
-            timeout=180,
+            timeout=240,
             check=False,
         )
         self.log("live session after restart: " + " | ".join(line for line in back.splitlines() if line.strip()))
@@ -2138,7 +2215,10 @@ class InstallerTest:
         session = session.removesuffix(".desktop")
         self.serial.command("mkdir -p /etc/sddm.conf.d", timeout=30)
         self.serial.write_file(
-            "/etc/sddm.conf.d/99-install-test-autologin.conf",
+            # Written last in name order on purpose: the live image's own
+            # configuration outvoted a test drop-in named "99-..." in run
+            # 42112234958, so a test-only drop-in takes the end of the alphabet.
+            "/etc/sddm.conf.d/zz-install-test-autologin.conf",
             f"[Autologin]\nUser=samurai\nSession={session}\n",
         )
         self.log(f"enabled test-only SDDM autologin into {session!r}")
