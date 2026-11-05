@@ -48,7 +48,7 @@ it:
 | 3 | KDE Plasma works as the primary desktop | asserted by the desktop phase once it runs |
 | 4 | Kuro and Shiro themes persist and function | asserted by the desktop phase once it runs |
 | 5 | Developer profile usable | `samurai-profile` is tested on the installed system, but the guest has no network so real installs are not exercised |
-| 6 | Security defaults and update mechanisms documented and tested | **not met** - the install test reads nftables, AppArmor, sudo policy and unattended upgrades back off the installed system, but no run has ever reached that phase; the live session's firewall additionally failed to load (cause and gate in `security.md`) |
+| 6 | Security defaults and update mechanisms documented and tested | **not met** - the install test reads nftables, AppArmor, sudo policy and unattended upgrades back off the installed system, but no run has ever reached that phase because Calamares dies in its partition module. The firewall's own history is closed at image level: the live-session load failure had a real cause (kernel/modules split), the build now prevents it, `verify-iso.sh` gates it, and run `41896746985` read the running ruleset back (`table inet samurai`, `chain ingress ... policy drop`, `nftables.service` exit `0/SUCCESS`). Evidence and the remaining gap are in `security.md` |
 | 7-10 | AI assistant, local mode, cloud disclosure, model routing | **not met** - no AI runtime ships |
 | 11 | Gaming tested on declared supported configurations | **not met** - only the MangoHUD interposer load is checked |
 | 12 | Performance measurements reproducible | harness exists (`build/measure-performance.sh`) and is gated by the install test; no numbers published yet |
