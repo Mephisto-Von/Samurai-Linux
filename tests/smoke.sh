@@ -106,6 +106,46 @@ if bad:
     sys.exit(1)
 PY
     ok "every method the harness calls on itself exists"
+    # The harness types shell into a serial console, and a quote that closes the
+    # wrong way there is a syntax error the guest reports on a line nobody reads
+    # until minutes into a CI cycle. So parse every literal command string now,
+    # with the same shell the guest runs.
+    python3 - "$REPO_ROOT/build/install-test.py" <<'PY'
+import ast
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+bad = []
+for path in sys.argv[1:]:
+    tree = ast.parse(pathlib.Path(path).read_text())
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"command", "write_file", "background"}
+            and node.args
+        ):
+            continue
+        try:
+            script = ast.literal_eval(node.args[0])
+        except Exception:
+            continue  # built from f-strings at runtime; checked where it runs
+        if not isinstance(script, str) or not script.strip():
+            continue
+        with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as fh:
+            fh.write(script)
+            name = fh.name
+        result = subprocess.run(["sh", "-n", name], capture_output=True, text=True)
+        pathlib.Path(name).unlink()
+        if result.returncode:
+            bad.append(f"{path}:{node.lineno}: {result.stderr.strip()}")
+if bad:
+    print("\n".join(bad))
+    sys.exit(1)
+PY
+    ok "every shell command the harness types parses"
     # A name that is never assigned parses fine, self-tests fine, and then stops
     # a three-hour CI install run in its tracks: install-test.py died with
     # "name 'tail' is not defined" after a rewrite deleted the line that set it.

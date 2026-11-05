@@ -793,9 +793,9 @@ class InstallerTest:
                         f"tail -n 200 {logfile} 2>/dev/null || true", timeout=60
                     )
                     # The display server dying takes Calamares and KWin with it.
-                    # The live session is Wayland, so there is no Xorg log: the
-                    # compositor's own session log, the journal and any coredump
-                    # are what record the crash.
+                    # Depending on the session there may be no Xorg log at all, so
+                    # read the compositor's own session log, the journal and any
+                    # coredump: those record the crash either way.
                     display = self.serial.command(
                         'dmesg | tail -n 30; free -m | head -n 3; '
                         'for f in /var/log/Xorg.0.log /run/sddm/xorg.log '
@@ -808,7 +808,14 @@ class InstallerTest:
                         'journalctl -b --no-pager 2>&1 | grep -iE "kwin|sddm|coredump|oom|'
                         'out of memory|drm" | tail -n 60; '
                         'command -v coredumpctl >/dev/null && '
-                        'coredumpctl list --no-pager 2>&1 | tail -n 8; true',
+                        'coredumpctl list --no-pager 2>&1 | tail -n 8; '
+                        # The list says which binary died; only the backtrace says
+                        # whether it was the compositor or the installer. Run
+                        # 41989352435 had frames from libkwin.so.6 and a Calamares
+                        # process that was alive until its X connection broke.
+                        'command -v coredumpctl >/dev/null && '
+                        'coredumpctl info --no-pager 2>&1 | '
+                        'grep -E "^(Executable|Signal|Command|#[0-9]+)" | tail -n 25; true',
                         timeout=120,
                     )
                     self.vnc.capture(f"{screenshot}-process-gone.png")
@@ -1136,6 +1143,75 @@ class InstallerTest:
         )
         self.log(f"live installer entry point:\n{report[-2500:]}")
 
+    def ensure_x11_live_session(self) -> None:
+        """Move the live session from KWin on Wayland to KWin on X11.
+
+        Three runs end the same way: Calamares logs "Updating partitioning
+        preview widgets" and one or two seconds later the coredump table records a
+        SIGSEGV in /usr/bin/kwin_wayland (run 41989352435: PID 1252, UID 1000,
+        frames from libkwin.so.6), the Wayland session's Xwayland dies with it,
+        and Calamares exits quoting "The X11 connection broke (error 1). Did the
+        X11 server die?" - which is why that run's OCR saw a blank screen from
+        07:51:45 onward and why the installer looked dead when it was not.
+        Giving the guest a real KMS device did not prevent it: virtio-gpu has
+        been the QEMU VGA since run 41596964514 and the crash came back at the
+        same step. The compositor is what dies, so ask for the other one. Plasma
+        ships both, the installed system is already tested on X11 because
+        MangoHUD is documented to be unreliable on Wayland, and X11 gives the
+        test an Xorg to switch VTs to, which is what the VNC screenshot shows.
+
+        This overrides the live image's session choice at runtime; it is logged
+        as a test-environment change, not as a shipped default.
+        """
+        assert self.serial
+        compositor = self.serial.command(
+            "pgrep -x kwin_wayland >/dev/null && echo wayland=yes; "
+            "pgrep -x kwin_x11 >/dev/null && echo x11=yes; true",
+            timeout=30,
+            check=False,
+        )
+        self.log("live compositor: " + " ".join(compositor.split()))
+        if "x11=yes" in compositor:
+            return
+        if "wayland=yes" not in compositor:
+            self.log("no Plasma compositor is running; leaving the session alone")
+            return
+        listing = self.serial.command(
+            'for f in /usr/share/xsessions/*.desktop; do [ -e "$f" ] && echo "$f"; '
+            "done 2>/dev/null || true",
+            timeout=30,
+            check=False,
+        )
+        files = [line.strip() for line in listing.splitlines() if line.strip().endswith(".desktop")]
+        if not files:
+            self.log("the live image ships no X11 session file; staying on Wayland")
+            return
+        # SDDM matches [Autologin] Session against the session name, not the
+        # file name, so the ".desktop" suffix has to go.
+        session = Path(files[0]).name.removesuffix(".desktop")
+        self.serial.command("mkdir -p /etc/sddm.conf.d", timeout=30)
+        self.serial.write_file(
+            "/etc/sddm.conf.d/99-install-test-x11.conf",
+            f"[Autologin]\nUser=samurai\nSession={session}\n",
+        )
+        self.log(f"restarting SDDM into the X11 session {session!r} for this test")
+        self.serial.command("systemctl restart sddm", timeout=180, check=False)
+        back = self.serial.command(
+            "i=0; while [ $i -lt 60 ] && ! pgrep -x kwin_x11 >/dev/null 2>&1; do "
+            "sleep 2; i=$((i+1)); done; "
+            "echo waited_halves=$i; pgrep -x kwin_x11 >/dev/null 2>&1 "
+            "&& echo x11=yes || echo x11=no; "
+            "loginctl --no-pager list-sessions 2>&1 | head -n 4",
+            timeout=180,
+            check=False,
+        )
+        self.log("live session after restart: " + " | ".join(line for line in back.splitlines() if line.strip()))
+        if "x11=yes" not in back:
+            raise Failure(
+                f"the live session did not come back on X11 as {session!r}: {back.strip()!r}; "
+                f"X11 session files present: {listing.strip()}"
+            )
+
     def launch_calamares(self) -> None:
         # The Debian wrapper moves the live fstab aside because it confuses
         # Calamares' partition module.
@@ -1143,6 +1219,7 @@ class InstallerTest:
         self.report_firewall()
         self.report_input_devices()
         self.report_installer_entry_point()
+        self.ensure_x11_live_session()
         self.serial.command(
             "if [ -e /etc/fstab ]; then mv /etc/fstab /etc/fstab.orig.calamares; fi",
             timeout=30,
@@ -1153,13 +1230,23 @@ class InstallerTest:
             "sleep 2; i=$((i+1)); done; test -S /tmp/.X11-unix/X0",
             timeout=150,
         )
-        # Find the live session's X cookie and let root use that display.
+        # Find the live session's X cookie and let root use that display. The
+        # cookie an SDDM X11 session actually uses is named in the session's own
+        # environment (/run/sddm/xauth_XXXXXX, unlinked from ~/.Xauthority), so
+        # ask the compositor process before falling back to the usual files.
         self.serial.command(
             "i=0; xa=; while [ $i -lt 60 ]; do "
-            "xa=$(ls /home/samurai/.Xauthority /run/user/1000/xauth_* 2>/dev/null | head -n1); "
+            "for p in $(pgrep -x kwin_x11 2>/dev/null) $(pgrep -x Xwayland 2>/dev/null); do "
+            'c=$(tr \'\\0\' \'\\n\' < "/proc/$p/environ" 2>/dev/null '
+            "| sed -n 's/^XAUTHORITY=//p' | head -n1); "
+            '[ -n "$c" ] && [ -r "$c" ] && xa=$c && break; done; '
+            '[ -n "$xa" ] || xa=$(ls /home/samurai/.Xauthority /run/user/1000/xauth_* '
+            '/run/sddm/xauth_* 2>/dev/null | head -n1); '
             "[ -n \"$xa\" ] && break; sleep 2; i=$((i+1)); done; "
+            'echo "x cookie=$xa readable=$(test -r "$xa" 2>/dev/null && echo yes || echo no)"; '
             "test -n \"$xa\" && install -m 0600 \"$xa\" /root/.Xauthority",
             timeout=150,
+            check=False,
         )
         self.serial.command(
             "DISPLAY=:0 XAUTHORITY=/root/.Xauthority xhost +SI:localuser:root "
