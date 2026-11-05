@@ -46,6 +46,47 @@ image nor the installed system satisfies Secure Boot's chain of trust. Booting
 with Secure Boot on requires either turning it off in firmware or enrolling your
 own key and signing the bootloader yourself.
 
+## Running the ISO in a virtual machine
+
+This is how the image is exercised for a demo, and it is also how every
+automated claim about it was produced - in QEMU. **No Samurai test or build has
+ever run on VMware**, so a VMware session is new evidence rather than a
+confirmation, and what it shows should be written down.
+
+Get the current image (artifacts live 7 days):
+
+```bash
+gh run download <build-run-id> --name samurai-linux-iso --dir dist
+cd dist && sha256sum -c ./*.iso.sha256 && gpg --verify ./*.iso.sig
+```
+
+Those two commands are not ceremony: install-test.yml performs the same
+verification before it installs anything, and an ISO that was not built by the
+run it claims is not the image a green test would have proven.
+
+VM settings the image's own configuration dictates:
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| Firmware | UEFI **or** BIOS | the ISO is hybrid: `grub-pc-bin` and `grub-efi-amd64-bin` both ship |
+| Secure Boot | **off** | nothing here signs a bootloader and no `shim` is installed |
+| CD/DVD | ISO image file, connect at power on | the live system boots from the squashfs on the disc |
+| Memory | 4 GB or more | Plasma, Calamares and the live rootfs share that RAM |
+| Hard disk | 20 GB or more | installation.md's minimum for a real install |
+| 3D acceleration | start with it on, and change only what you observed | the one documented live-session crash is `kwin_wayland` taking a SIGSEGV when Calamares paints its partition preview; that has only ever been seen with QEMU's software renderer, so VMware's path is unmeasured |
+| Network | NAT is enough | outbound works; the image's nftables ruleset is `chain ingress ... policy drop`, so inbound connections are expected to fail |
+
+What a VMware session can demonstrate without any further work: the boot menu
+and splash, SDDM, the live Plasma desktop, the Kuro and Shiro themes
+(`samurai-theme`), and the `samurai-*` CLIs. Booting to SDDM is verified in CI
+(run `41545976827`) and branding is gated by `build/verify-iso.sh`.
+
+What it cannot yet demonstrate anywhere: a **completed** Calamares installation.
+The scripted driver reaches the partition page and no further in CI, so if the
+installer is part of the demo, rehearse it first, in a throwaway VM, and treat
+the outcome as a result to be recorded rather than a step that is assumed to
+work. The crash-and-recover notes for that are in the Live Session steps above.
+
 ## Live Session
 
 1. Boot the USB drive and choose **Samurai Linux Live (amd64)** in the boot

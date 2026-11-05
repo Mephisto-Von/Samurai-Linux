@@ -64,6 +64,51 @@ dist/samurai-linux-YYYY.MM.DD-amd64.iso.sha256
 ```
 
 `SAMURAI_MIN_DISK_GB` and `SAMURAI_MIN_RAM_GB` override the preflight limits.
+They exist because a build that runs out of disk halfway through leaves a
+`chroot` tree that no later run can clean up; overriding them downwards is
+allowed and unwise.
+
+### Building without a Linux host
+
+The hosted workflow is the same `live-build` run inside a privileged
+`debian:trixie` container on a GitHub runner, followed by `verify-iso.sh`, the
+QEMU boot test, signing and the chained install test:
+
+```bash
+gh workflow run build-iso-hosted.yml          # then watch the Actions tab
+gh run download <run-id> --name samurai-linux-iso --dir dist
+```
+
+This is the route to use from Windows, and it is not a lesser build: the image
+definition, the verification gates and the signing key are the ones in this
+repository. Its practical limits are that the whole build has to fit the free
+disk a hosted runner offers - which is why the workflow deletes unused
+toolchains first and still asks for `min_disk_gb` (default 25 GiB) - that the
+artifact disappears after 7 days, and that a build is not a test: the install
+test chained to it is what says whether the image installs.
+
+### The update loop
+
+A new image is the only way anything in the ISO changes. The loop is:
+
+1. Edit the image definition - packages in
+   `build/config/package-lists/samurai.list.chroot`, files in
+   `build/config/includes.chroot/`, setup in `build/config/hooks/normal/`.
+2. `bash build/build.sh --check`, then build (locally or through the workflow).
+3. `bash build/verify-iso.sh dist/<iso>` - this is where a missing compositor,
+   an unloadable firewall module or a broken kernel/modules pairing is caught
+   without booting anything.
+4. Boot it (`build/qemu-test.sh`, or a VM), then dispatch
+   `install-test.yml` with that run's id.
+5. Sign and, only once the install test is green at that commit, release
+   (`scripts/release-gate.sh`; see
+   [`release-process.md`](release-process.md)).
+
+An **installed** system updates another way entirely: `apt`, plus
+`unattended-upgrades` for `Debian:trixie-security` as configured by
+`build/config/includes.chroot/etc/apt/apt.conf.d/20samurai-security`. There is
+no Samurai APT repository, so package changes reach users only through a newer
+ISO.
 
 ## 5. Sign the release
 
