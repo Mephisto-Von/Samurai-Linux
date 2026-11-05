@@ -1143,6 +1143,33 @@ class InstallerTest:
         )
         self.log(f"live installer entry point:\n{report[-2500:]}")
 
+    def live_compositor(self) -> str:
+        """Return "x11" or "wayland" once the live session has a compositor.
+
+        Run 41991858787 asked at 08:11:23 and got nothing, because SDDM was still
+        bringing the session up, then decided there was no Wayland session to
+        switch away from; by 08:11:59 that same session had kwin_wayland,
+        plasmashell and Xwayland running and the installer had been launched into
+        a half-started desktop. A compositor that has not forked yet is not a
+        compositor that is absent, so wait for one to appear.
+        """
+        assert self.serial
+        out = self.serial.command(
+            "i=0; c=; while [ $i -lt 90 ]; do "
+            "if pgrep -x kwin_x11 >/dev/null 2>&1; then c=x11; break; fi; "
+            "if pgrep -x kwin_wayland >/dev/null 2>&1; then c=wayland; break; fi; "
+            "sleep 2; i=$((i+1)); done; "
+            'echo "compositor=${c:-none} waited_halves=$i"',
+            timeout=240,
+            check=False,
+        )
+        self.log("live compositor: " + " ".join(out.split()))
+        for line in out.splitlines():
+            if line.startswith("compositor="):
+                value = line.split("=", 1)[1].split()[0]
+                return "" if value == "none" else value
+        return ""
+
     def ensure_x11_live_session(self) -> None:
         """Move the live session from KWin on Wayland to KWin on X11.
 
@@ -1164,17 +1191,11 @@ class InstallerTest:
         as a test-environment change, not as a shipped default.
         """
         assert self.serial
-        compositor = self.serial.command(
-            "pgrep -x kwin_wayland >/dev/null && echo wayland=yes; "
-            "pgrep -x kwin_x11 >/dev/null && echo x11=yes; true",
-            timeout=30,
-            check=False,
-        )
-        self.log("live compositor: " + " ".join(compositor.split()))
-        if "x11=yes" in compositor:
+        compositor = self.live_compositor()
+        if compositor == "x11":
             return
-        if "wayland=yes" not in compositor:
-            self.log("no Plasma compositor is running; leaving the session alone")
+        if compositor != "wayland":
+            self.log("no Plasma compositor came up at all; leaving the session alone")
             return
         listing = self.serial.command(
             'for f in /usr/share/xsessions/*.desktop; do [ -e "$f" ] && echo "$f"; '
@@ -1212,6 +1233,47 @@ class InstallerTest:
                 f"X11 session files present: {listing.strip()}"
             )
 
+    def prepare_root_display(self) -> None:
+        """Give root a working :0 and prove it before putting anything on it.
+
+        Run 41991858787 copied the X cookie at 08:11:26 while the session was
+        still starting and SDDM replaced that cookie as it came up; the xhost
+        grant that followed threw its output away, so Calamares was launched at
+        08:11:58 onto a display root could not use, died within four seconds, and
+        the tail the harness reported was xdg-desktop-portal noise about "cannot
+        open display" rather than the reason. Ask the live session's own processes
+        where their cookie is, then check the answer with a real X request and
+        retry until it succeeds.
+        """
+        assert self.serial
+        state = ""
+        for attempt in range(1, 8):
+            state = self.serial.command(
+                "xa=; for p in $(pgrep -x kwin_x11 2>/dev/null) $(pgrep -x kwin_wayland 2>/dev/null) "
+                "$(pgrep -x Xwayland 2>/dev/null) $(pgrep -x Xorg 2>/dev/null); do "
+                'c=$(tr \'\\0\' \'\\n\' < "/proc/$p/environ" 2>/dev/null '
+                "| sed -n 's/^XAUTHORITY=//p' | head -n1); "
+                '[ -n "$c" ] && [ -r "$c" ] && xa=$c && break; done; '
+                '[ -n "$xa" ] || xa=$(ls /home/samurai/.Xauthority /run/user/1000/xauth_* '
+                '/run/sddm/xauth_* 2>/dev/null | head -n1); '
+                'if [ -n "$xa" ]; then install -m 0600 "$xa" /root/.Xauthority; fi; '
+                "if DISPLAY=:0 XAUTHORITY=/root/.Xauthority xhost +SI:localuser:root "
+                ">/dev/null 2>&1; then xh=ok; else xh=refused; fi; "
+                "if DISPLAY=:0 XAUTHORITY=/root/.Xauthority xset q >/dev/null 2>&1; "
+                "then xs=ok; else xs=refused; fi; "
+                'printf "cookie=%s xhost=%s xset=%s\\n" "${xa:-none}" "$xh" "$xs"',
+                timeout=90,
+                check=False,
+            )
+            self.log(f"display attempt {attempt}: " + " ".join(state.split()))
+            if "xset=ok" in state:
+                return
+            time.sleep(5)
+        raise Failure(
+            "root could not use the live X display, so nothing could be launched "
+            f"on it; last answer from the guest: {state.strip()!r}"
+        )
+
     def launch_calamares(self) -> None:
         # The Debian wrapper moves the live fstab aside because it confuses
         # Calamares' partition module.
@@ -1225,35 +1287,7 @@ class InstallerTest:
             timeout=30,
             check=False,
         )
-        self.serial.command(
-            "i=0; while [ $i -lt 60 ] && [ ! -S /tmp/.X11-unix/X0 ]; do "
-            "sleep 2; i=$((i+1)); done; test -S /tmp/.X11-unix/X0",
-            timeout=150,
-        )
-        # Find the live session's X cookie and let root use that display. The
-        # cookie an SDDM X11 session actually uses is named in the session's own
-        # environment (/run/sddm/xauth_XXXXXX, unlinked from ~/.Xauthority), so
-        # ask the compositor process before falling back to the usual files.
-        self.serial.command(
-            "i=0; xa=; while [ $i -lt 60 ]; do "
-            "for p in $(pgrep -x kwin_x11 2>/dev/null) $(pgrep -x Xwayland 2>/dev/null); do "
-            'c=$(tr \'\\0\' \'\\n\' < "/proc/$p/environ" 2>/dev/null '
-            "| sed -n 's/^XAUTHORITY=//p' | head -n1); "
-            '[ -n "$c" ] && [ -r "$c" ] && xa=$c && break; done; '
-            '[ -n "$xa" ] || xa=$(ls /home/samurai/.Xauthority /run/user/1000/xauth_* '
-            '/run/sddm/xauth_* 2>/dev/null | head -n1); '
-            "[ -n \"$xa\" ] && break; sleep 2; i=$((i+1)); done; "
-            'echo "x cookie=$xa readable=$(test -r "$xa" 2>/dev/null && echo yes || echo no)"; '
-            "test -n \"$xa\" && install -m 0600 \"$xa\" /root/.Xauthority",
-            timeout=150,
-            check=False,
-        )
-        self.serial.command(
-            "DISPLAY=:0 XAUTHORITY=/root/.Xauthority xhost +SI:localuser:root "
-            ">/dev/null 2>&1 || true",
-            timeout=30,
-            check=False,
-        )
+        self.prepare_root_display()
         # QEMU's VNC output follows the active VT, so make Xorg's VT visible.
         self.serial.command(
             "vt=$(ps -o tty= -C Xorg 2>/dev/null | tr -d ' ' | head -n1); "
