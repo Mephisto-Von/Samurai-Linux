@@ -566,6 +566,20 @@ for dir in usr/share/xsessions usr/share/wayland-sessions; do
         if ! grep -q "^${need}${TAB}" "$MANIFEST"; then
             die "${entry#"$ROOT"/} is selectable at login but $need is not installed: the session would start with no compositor"
         fi
+        # The compositor is only half of "this session starts". SDDM runs the
+        # file's Exec=, so that program has to be in the image too - a session
+        # whose launcher is missing produces a live X server and no desktop,
+        # which is what run 42105485811 looked like from the outside.
+        exec_line=$(sed -n 's/^Exec=//p' "$entry" | head -n1)
+        exec_bin=${exec_line%% *}
+        [[ -n "$exec_bin" ]] || die "${entry#"$ROOT"/} has no Exec= line: nothing would start"
+        exec_bin=${exec_bin#/}
+        [[ "$exec_bin" == */* ]] || exec_bin="usr/bin/$exec_bin"
+        if [[ ! -e "$ROOT/$exec_bin" ]]; then
+            if ! unsquashfs -f -no-progress -d "$ROOT" "$SQUASHFS" "$exec_bin" >/dev/null 2>&1; then
+                die "${entry#"$ROOT"/} is selectable at login but its Exec=$exec_line is not in the image: the session would start with nothing to run"
+            fi
+        fi
     done
 done
 ((offered > 0)) || die "no session entries were found to check"

@@ -85,7 +85,7 @@ echo "SAMURAI_SESSION_PROCS=$(ps -u samurai -o comm= 2>/dev/null | sort -u | tr 
 # "Transport endpoint is not connected", so that socket was not the live bus.
 busaddr=
 for pid in $(pgrep -u samurai -x dbus-daemon 2>/dev/null) $(pgrep -u samurai -x plasmashell 2>/dev/null) \
-        $(pgrep -u samurai -x kwin_wayland 2>/dev/null); do
+        $(pgrep -u samurai -x kwin_x11 2>/dev/null) $(pgrep -u samurai -x kwin_wayland 2>/dev/null); do
     candidate=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p' | head -n 1)
     [ -z "$candidate" ] && continue
     if DBUS_SESSION_BUS_ADDRESS="$candidate" busctl --no-pager --user list >/dev/null 2>&1; then
@@ -615,6 +615,7 @@ class InstallerTest:
         self.desktop = args.desktop
         self.desktop_session = args.desktop_session
         self.session_env: dict[str, str] = {}
+        self.x_display = ":0"
         self.root_ready = False
         self.log_copied = False
         if not 1 <= self.vnc_display <= 99:
@@ -1175,6 +1176,112 @@ class InstallerTest:
                 return "" if value == "none" else value
         return ""
 
+    def live_x_display(self) -> str:
+        """Which X display the guest's X server actually answers on.
+
+        ":0" stops being safe the moment SDDM is restarted: run 42105485811 kept
+        logind session 5 (the Wayland one, with its Xwayland on :0) listed as
+        "online" while the new Xorg took tty3, so a hardcoded :0 can name a
+        server that no longer holds the screen. Ask the running Xorg.
+        """
+        assert self.serial
+        out = self.serial.command(
+            "for p in $(pgrep -x Xorg 2>/dev/null); do "
+            "tr '\\0' '\\n' < \"/proc/$p/cmdline\" 2>/dev/null; done "
+            "| grep -E -m1 '^:[0-9]+$' || true",
+            timeout=60,
+            check=False,
+        )
+        for line in out.splitlines():
+            if re.fullmatch(r":\d+", line.strip()):
+                return line.strip()
+        return ":0"
+
+    def start_x11_session(self, session: str) -> bool:
+        """Start the X11 Plasma session by hand when SDDM's autologin did not.
+
+        Run 42105485811 is the first run that got this far with the compositor
+        installed: Xorg was alive, logind called the session Type=x11 and active,
+        /usr/bin/kwin_x11 existed, and neither startplasma-x11 nor kwin_x11 was
+        in the process table - so the session file was selected and its program
+        never ran, or ran and exited before forking anything the poll could see.
+        The X server is therefore not the problem and the compositor binary is
+        not missing; what is missing is the session's own program. Run exactly
+        what the session file says to run, as the user SDDM logged in, on the
+        display the running Xorg serves, and keep everything it prints.
+
+        A success here says the installer was tested on an X11 desktop the
+        harness started rather than one SDDM autologin started; a failure says
+        startplasma-x11 cannot come up in the live image at all. Both are worth
+        more than this method's absence, which only ever produced "x11=no".
+        """
+        assert self.serial
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", session):
+            self.log(f"refusing to start session with the unusable name {session!r}")
+            return False
+        session_file = shlex.quote(f"/usr/share/xsessions/{session}.desktop")
+        info = self.serial.command(
+            "xp=$(pgrep -x Xorg 2>/dev/null | head -n1); "
+            "disp=; xa=; exec_line=; "
+            'if [ -n "$xp" ]; then '
+            "disp=$(tr '\\0' '\\n' < \"/proc/$xp/cmdline\" 2>/dev/null | grep -E -m1 '^:[0-9]+$'); "
+            "xa=$(tr '\\0' '\\n' < \"/proc/$xp/environ\" 2>/dev/null "
+            "| sed -n 's/^XAUTHORITY=//p' | head -n1); fi; "
+            "exec_line=$(sed -n 's/^Exec=//p' " + session_file + " | head -n1); "
+            'printf "xorg=%s\\ndisplay=%s\\ncookie=%s\\nexec=%s\\n" '
+            '"${xp:-none}" "${disp:-none}" "${xa:-none}" "${exec_line:-none}"',
+            timeout=60,
+            check=False,
+        )
+        fields = {}
+        for line in info.splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                fields[key.strip()] = value.strip()
+        display, cookie = fields.get("display", "none"), fields.get("cookie", "none")
+        program = fields.get("exec", "none")
+        self.log(f"X11 session by hand: {' '.join(info.split())}")
+        if display == "none" or program == "none":
+            self.log("there is no X server or no session Exec to start the session on")
+            return False
+        env = f"HOME=/home/samurai DISPLAY={shlex.quote(display)} XDG_SESSION_TYPE=x11"
+        if cookie != "none":
+            env += f" XAUTHORITY={shlex.quote(cookie)}"
+        # The session bus SDDM would have given the session does not exist here,
+        # and startplasma-x11 needs one to register kded6 on - which is the name
+        # Calamares' first partitioning job calls. Give the session a bus the
+        # same way the shipped session does, and let the launcher find it in
+        # samurai's own process environment the way it finds any other.
+        wrapper = "/tmp/samurai-start-x11-session.sh"
+        self.serial.write_file(
+            wrapper,
+            "#!/bin/sh\n"
+            "if command -v dbus-run-session >/dev/null 2>&1; then\n"
+            f"    exec dbus-run-session -- bash -lc {shlex.quote(program)}\n"
+            "fi\n"
+            f"exec bash -lc {shlex.quote(program)}\n",
+        )
+        self.serial.command(f"chmod 0755 {shlex.quote(wrapper)}", timeout=30, check=False)
+        self.serial.command(
+            "rm -f /tmp/samurai-startplasma.out; "
+            f"setsid sudo -u samurai env {env} XDG_RUNTIME_DIR=/run/user/1000 "
+            f"sh {shlex.quote(wrapper)} >/tmp/samurai-startplasma.out 2>&1 "
+            "< /dev/null & echo started=$!",
+            timeout=60,
+            check=False,
+        )
+        back = self.serial.command(
+            "i=0; while [ $i -lt 45 ] && ! pgrep -x kwin_x11 >/dev/null 2>&1; do "
+            "sleep 2; i=$((i+1)); done; "
+            "echo waited_halves=$i; pgrep -x kwin_x11 >/dev/null 2>&1 "
+            "&& echo x11=yes || echo x11=no; "
+            "echo 'what it printed:'; tail -n 25 /tmp/samurai-startplasma.out 2>&1",
+            timeout=150,
+            check=False,
+        )
+        self.log("X11 session started by hand: " + " | ".join(line for line in back.splitlines() if line.strip()))
+        return "x11=yes" in back
+
     def ensure_x11_live_session(self) -> None:
         """Move the live session from KWin on Wayland to KWin on X11.
 
@@ -1240,26 +1347,42 @@ class InstallerTest:
             # have come back on Wayland, or X itself may have failed. Ask which
             # of those it is before giving up.
             detail = self.serial.command(
-                "ps -e -o pid=,comm= | grep -E 'kwin|Xorg|Xwayland|startplasma' | head -n 8; "
-                "echo 'compositor binaries:'; ls -l /usr/bin/kwin_x11 /usr/bin/kwin_wayland 2>&1; "
+                "ps -e -o pid=,uid=,comm= | grep -E 'kwin|Xorg|Xwayland|startplasma|plasma' | head -n 12; "
+                "echo 'compositor binaries:'; ls -l /usr/bin/kwin_x11 /usr/bin/kwin_wayland "
+                "/usr/bin/startplasma-x11 2>&1; "
+                "echo 'session file:'; grep -HE '^(Exec|TryExec|DesktopNames)=' "
+                "/usr/share/xsessions/*.desktop 2>&1; "
                 "echo 'session types:'; "
                 "for s in $(loginctl --no-pager list-sessions 2>/dev/null | awk 'NR>1{print $1}'); do "
                 'echo "$s $(loginctl --no-pager show-session "$s" -p Type -p State -p TTY '
                 '2>/dev/null | tr \'\\n\' \' \')"; done; '
-                "echo 'xorg session log:'; "
-                "tail -n 20 /home/samurai/.local/share/sddm/xorg-session.log 2>&1",
+                "echo 'core dumps:'; coredumpctl --no-pager list 2>&1 | tail -n 8; "
+                "echo 'xorg log:'; "
+                "lf=$(ls -t /var/log/Xorg.*.log 2>/dev/null | head -n1); "
+                'echo "$lf"; [ -n "$lf" ] && tail -n 25 "$lf"; '
+                "echo 'sddm journal:'; journalctl -b -u sddm --no-pager 2>&1 | tail -n 30; "
+                "echo 'sddm session logs:'; ls -l /home/samurai/.local/share/sddm/ 2>&1; "
+                "for f in /home/samurai/.local/share/sddm/*.log; do "
+                '[ -e "$f" ] && echo "--- $f" && tail -n 20 "$f"; done 2>&1',
                 timeout=120,
                 check=False,
             )
-            self.log("why the X11 session did not come up:\n" + detail[-3000:])
+            self.log("why the X11 session did not come up:\n" + detail[-4000:])
+            if self.start_x11_session(session):
+                self.log(
+                    "the X11 session came up only when the harness started it; SDDM "
+                    "autologin into that session is a real defect, logged as one"
+                )
+                return
             raise Failure(
-                f"the live session did not come back on X11 as {session!r}; "
+                f"the live session did not come back on X11 as {session!r}, and the "
+                f"harness could not start that session by hand either; "
                 f"sessions after restart: {back.strip()!r}\n"
-                f"what the guest says is running:\n{detail[-2500:]}"
+                f"what the guest says is running:\n{detail[-3000:]}"
             )
 
     def prepare_root_display(self) -> None:
-        """Give root a working :0 and prove it before putting anything on it.
+        """Give root a working X display and prove it before putting anything on it.
 
         Run 41991858787 copied the X cookie at 08:11:26 while the session was
         still starting and SDDM replaced that cookie as it came up; the xhost
@@ -1271,6 +1394,8 @@ class InstallerTest:
         retry until it succeeds.
         """
         assert self.serial
+        self.x_display = self.live_x_display()
+        self.log(f"live X display: {self.x_display}")
         state = ""
         for attempt in range(1, 8):
             state = self.serial.command(
@@ -1282,9 +1407,11 @@ class InstallerTest:
                 '[ -n "$xa" ] || xa=$(ls /home/samurai/.Xauthority /run/user/1000/xauth_* '
                 '/run/sddm/xauth_* 2>/dev/null | head -n1); '
                 'if [ -n "$xa" ]; then install -m 0600 "$xa" /root/.Xauthority; fi; '
-                "if DISPLAY=:0 XAUTHORITY=/root/.Xauthority xhost +SI:localuser:root "
+                "if DISPLAY=" + self.x_display + " XAUTHORITY=/root/.Xauthority "
+                "xhost +SI:localuser:root "
                 ">/dev/null 2>&1; then xh=ok; else xh=refused; fi; "
-                "if DISPLAY=:0 XAUTHORITY=/root/.Xauthority xset q >/dev/null 2>&1; "
+                "if DISPLAY=" + self.x_display + " XAUTHORITY=/root/.Xauthority "
+                "xset q >/dev/null 2>&1; "
                 "then xs=ok; else xs=refused; fi; "
                 'printf "cookie=%s xhost=%s xset=%s\\n" "${xa:-none}" "$xh" "$xs"',
                 timeout=90,
@@ -1326,7 +1453,7 @@ class InstallerTest:
         # Plasma's power daemon from blanking it again.
         self.serial.command(
             "pkill -x powerdevil >/dev/null 2>&1 || true; "
-            "DISPLAY=:0 XAUTHORITY=/root/.Xauthority "
+            "DISPLAY=" + self.x_display + " XAUTHORITY=/root/.Xauthority "
             "xset s off s noblank -dpms >/dev/null 2>&1 || true",
             timeout=30,
             check=False,
@@ -1367,7 +1494,8 @@ class InstallerTest:
         else:
             start = launcher
         self.serial.background(
-            "DISPLAY=:0 XAUTHORITY=/root/.Xauthority QT_AUTO_SCREEN_SCALE_FACTOR=1 "
+            "DISPLAY=" + self.x_display + " XAUTHORITY=/root/.Xauthority "
+            "QT_AUTO_SCREEN_SCALE_FACTOR=1 "
             f"QT_QUICK_BACKEND=software {start} >/tmp/calamares.out 2>&1"
         )
         # Cold-starting kded can take half a minute, so wait for the installer
