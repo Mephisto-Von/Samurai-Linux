@@ -56,6 +56,86 @@ CRASH_WORDS = (
     "calamares closed",
 )
 
+# Where the installer is started from, inside the guest.
+CALAMARES_LAUNCHER_PATH = "/tmp/samurai-calamares-session.sh"
+
+# Calamares' first partitioning job asks KDE's kded for the automount setting,
+# and every run so far segfaulted inside that call: with no session bus at all
+# (runs 41802792291, 41830599254, after "Not connected to D-Bus server"), and
+# with a private bus whose D-Bus daemon had to cold-start kded6 while Calamares
+# sat blocked on it (runs 41833873221, 41892892060, 41984807632 - "Activating
+# service name='org.kde.kded6'", then "Signal: Segmentation fault (11)" one
+# second later). Leaving Debian's own partition.conf in place changed nothing,
+# so this is the call, not the config. Nobody can reproduce it from a real
+# desktop: a user starts the installer from Plasma, where kded has owned its bus
+# name since login and the call is answered by a running daemon instead of being
+# activated mid-flight from a worker thread. So give the installer the session it
+# would have in use - join the live session's own bus when root may use it, and
+# otherwise start kded first and wait for it to register before Calamares asks it
+# anything. Each SAMURAI_* line says what the launcher found, because "it
+# crashed again" and "it crashed for the same reason" are different failures.
+CALAMARES_LAUNCHER = r"""#!/bin/sh
+# Written by build/install-test.py; run under dbus-run-session.
+echo "SAMURAI_SESSION_PROCS=$(ps -u samurai -o comm= 2>/dev/null | sort -u | tr '\n' ' ')"
+[ -S /run/user/1000/bus ] && echo "SAMURAI_USERBUS_FILE=$(DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus busctl --no-pager --user list 2>&1 | head -n 1)"
+
+# The address a session really answers on comes from the session's own
+# processes: run 41984807632 named a Plasma desktop (kwin_wayland, ksplashqml
+# and a dbus-daemon, all owned by samurai) while /run/user/1000/bus said
+# "Transport endpoint is not connected", so that socket was not the live bus.
+busaddr=
+for pid in $(pgrep -u samurai -x dbus-daemon 2>/dev/null) $(pgrep -u samurai -x plasmashell 2>/dev/null) \
+        $(pgrep -u samurai -x kwin_wayland 2>/dev/null); do
+    candidate=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p' | head -n 1)
+    [ -z "$candidate" ] && continue
+    if DBUS_SESSION_BUS_ADDRESS="$candidate" busctl --no-pager --user list >/dev/null 2>&1; then
+        busaddr=$candidate
+        echo "SAMURAI_SESSION_BUS=pid=$pid reachable"
+        break
+    fi
+    echo "SAMURAI_SESSION_BUS=pid=$pid refused: $(DBUS_SESSION_BUS_ADDRESS="$candidate" busctl --no-pager --user list 2>&1 | head -n 1)"
+done
+if [ -n "$busaddr" ]; then
+    DBUS_SESSION_BUS_ADDRESS="$busaddr"
+    export DBUS_SESSION_BUS_ADDRESS
+    echo "SAMURAI_DBUS=session"
+else
+    echo SAMURAI_DBUS=private
+fi
+
+kded=
+for candidate in /usr/bin/kded6 /usr/bin/kded5; do
+    [ -x "$candidate" ] && kded=$candidate && break
+done
+case "${kded##*/}" in
+    kded5) kdedname=org.kde.kded5 ;;
+    *) kdedname=org.kde.kded6 ;;
+esac
+echo "SAMURAI_KDED=${kded:-absent} name=$kdedname owners=$(busctl --no-pager list 2>/dev/null | grep -c 'org\.kde\.kded')"
+
+# kded is only ever started on a bus of our own: on the desktop's bus its
+# absence is that desktop's business, not something to fix with a root daemon.
+if [ -z "$busaddr" ] && [ -n "$kded" ] \
+        && ! busctl --no-pager list 2>/dev/null | grep -q "$kdedname"; then
+    [ -d /run/user/0 ] || install -d -m 0700 /run/user/0
+    HOME=/root XDG_RUNTIME_DIR=/run/user/0 "$kded" >/tmp/kded.out 2>&1 &
+    kdedpid=$!
+    polls=0
+    while [ "$polls" -lt 60 ]; do
+        busctl --no-pager list 2>/dev/null | grep -q "$kdedname" && break
+        kill -0 "$kdedpid" 2>/dev/null || break
+        sleep 0.5
+        polls=$((polls + 1))
+    done
+    echo "SAMURAI_KDED_STARTED=pid=$kdedpid after_halves=$polls owners=$(busctl --no-pager list 2>/dev/null | grep -c 'org\.kde\.kded') alive=$(kill -0 "$kdedpid" 2>/dev/null && echo yes || echo no)"
+    echo "SAMURAI_KDED_TAIL=$(tail -n 2 /tmp/kded.out 2>/dev/null | tr '\n' '|')"
+fi
+
+echo "SAMURAI_AUTOMOUNT_PROBE=$(busctl --no-pager call "$kdedname" /kded "$kdedname" isModuleAutoloaded s device_automounter 2>&1 | head -n 1)"
+echo SAMURAI_LAUNCH=calamares
+exec calamares -d
+"""
+
 
 class Failure(RuntimeError):
     pass
@@ -1076,20 +1156,14 @@ class InstallerTest:
             timeout=30,
             check=False,
         )
-        # Calamares 3.3.14's partition module asks KDE Solid about automounting,
-        # and that path has segfaulted in every run so far: with no session bus
-        # at all (41802792291, 41830599254, right after "Not connected to D-Bus
-        # server") and with a private bus that had to cold-start kded6
-        # (41833873221, "Activating service name='org.kde.kded6'" then signal 11).
-        # A real user starts the installer from the desktop, inside the Plasma
-        # session's own bus where kded6 has been running since login, so borrow
-        # that bus instead of inventing one; dbus-run-session is only a fallback.
-        # Which desktop is actually running matters: run 41892892060 looked for
-        # plasmashell and found nobody, so it fell back to a private bus and died
-        # in the automount job again (the journal said "dbus-daemon[1365]:
-        # [session uid=0 ...]", a bus started for the installer rather than the
-        # one the session logged into). Name the session's processes and let the
-        # user bus say in its own words whether root may use it.
+        # Which desktop is actually running decides which half of the launcher
+        # matters. Run 41892892060 fell back to a private bus and the journal
+        # called it "dbus-daemon[1365]: [session uid=0 ...]" - a bus started for
+        # the installer, not the one a session logged into - while run
+        # 41984807632 showed samurai running kwin_wayland, ksplashqml and a
+        # dbus-daemon behind a /run/user/1000/bus that refused to connect. So
+        # name the session's processes and let the user bus say in its own words
+        # whether root may use it.
         desktop = self.serial.command(
             "ls /run/user/ 2>/dev/null | tr '\\n' ' '; "
             "echo session-procs:; ps -e -o user=,comm= "
@@ -1102,33 +1176,43 @@ class InstallerTest:
             check=False,
         )
         self.log("live desktop: " + " | ".join(line for line in desktop.splitlines() if line.strip()))
+        self.write_file(CALAMARES_LAUNCHER_PATH, CALAMARES_LAUNCHER)
+        launcher = shlex.quote(CALAMARES_LAUNCHER_PATH)
+        self.serial.command(f"chmod 0755 {launcher}", timeout=30)
+        if (
+            self.serial.command(
+                "command -v dbus-run-session >/dev/null && echo yes || echo no", timeout=30
+            ).strip()
+            == "yes"
+        ):
+            # The launcher moves to the Plasma bus itself when it can use it; the
+            # private bus is only there so kded has somewhere to register when
+            # there is no Plasma session to join.
+            start = f"dbus-run-session -- {launcher}"
+        else:
+            start = launcher
         self.serial.background(
             "DISPLAY=:0 XAUTHORITY=/root/.Xauthority QT_AUTO_SCREEN_SCALE_FACTOR=1 "
-            "QT_QUICK_BACKEND=software sh -c '"
-            'userbus=unix:path=/run/user/1000/bus; '
-            'echo "SAMURAI_DBUS_PROBE=$(DBUS_SESSION_BUS_ADDRESS=$userbus '
-            'busctl --no-pager --user list 2>&1 | head -n 1)"; '
-            'if [ -S "$userbus" ] && DBUS_SESSION_BUS_ADDRESS="$userbus" '
-            'busctl --no-pager --user list >/dev/null 2>&1; then '
-            'echo "SAMURAI_DBUS=plasma:$userbus"; export DBUS_SESSION_BUS_ADDRESS="$userbus"; '
-            'exec calamares -d; '
-            'elif command -v dbus-run-session >/dev/null 2>&1; then '
-            'echo SAMURAI_DBUS=private; exec dbus-run-session -- calamares -d; '
-            'else echo SAMURAI_DBUS=none; exec calamares -d; fi\' >/tmp/calamares.out 2>&1'
+            f"QT_QUICK_BACKEND=software {start} >/tmp/calamares.out 2>&1"
         )
-        time.sleep(10)
-        # The markers are the first lines the launcher writes, so read the head:
-        # reading the tail hid them behind Calamares' own startup output and run
-        # 41892892060 logged "not reported" for a fallback that had in fact run.
-        head = self.serial.command(
-            "head -n 5 /tmp/calamares.out 2>/dev/null || true", timeout=30, check=False
+        # Cold-starting kded can take half a minute, so wait for the installer
+        # instead of assuming a fixed delay: a 10-second sleep would have called
+        # run 41892892060 "not running" while its launcher was still working.
+        up = self.serial.command(
+            "i=0; while [ $i -lt 70 ] && ! pgrep -x calamares >/dev/null 2>&1; do "
+            "sleep 2; i=$((i+1)); done; "
+            "echo waited_halves=$i; pgrep -x calamares >/dev/null 2>&1 "
+            "&& echo calamares=yes || echo calamares=no",
+            timeout=180,
+            check=False,
         )
-        bus_choice = re.search(r"SAMURAI_DBUS=(\S+)", head)
-        bus_probe = re.search(r"SAMURAI_DBUS_PROBE=(.*)", head)
-        self.log(
-            f"Calamares session bus: {bus_choice.group(1) if bus_choice else 'not reported'}"
-            + (f"; user bus said: {bus_probe.group(1).strip()}" if bus_probe else "")
+        self.log("installer start: " + " ".join(up.split()))
+        markers = self.serial.command(
+            "grep -h '^SAMURAI_' /tmp/calamares.out 2>/dev/null || true", timeout=30, check=False
         )
+        for line in markers.splitlines():
+            name, _, value = line.partition("=")
+            self.log(f"launcher {name}: {value.strip()}")
         self.dismiss_welcome()
         tail = self.serial.command("tail -n 30 /tmp/calamares.out 2>/dev/null || true", timeout=30)
         running = self.serial.command("pgrep -x calamares >/dev/null && echo yes || echo no", timeout=30)
