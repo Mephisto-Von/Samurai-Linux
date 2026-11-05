@@ -214,10 +214,17 @@ signing failed the ISO artifact was not uploaded, so the install test was skippe
 and still has no green run. The two blockers since then were both found: the live
 image booted a kernel whose modules tree was not in the squashfs, which left the
 QEMU USB tablet without `usbhid` and made every VNC click land nowhere, and that is
-now fixed and gated - the wizard reaches `install started`. What blocks a green run
-today is Calamares 3.3.14 itself, which segfaults about two seconds into job 2 of 39
-("Clearing all temporary mounts"); the driver now notices a dead installer on its
-next poll instead of waiting out the timeout, and reports the core dump with it. The suite
+now fixed and gated - the wizard reaches `install started`. What blocked the
+next step turned out not to be Calamares at all: the job-2 segfault was the live
+Plasma **Wayland** compositor taking a SIGSEGV in `libkwin.so.6` while the
+partition preview mounted targets, and Xwayland and Calamares died with it - the
+driver now dumps `coredumpctl info` frames with the failure so the victim is
+named rather than guessed. The test switches the live session to X11, which
+exposed a third defect: the image offered an X11 session at login without
+installing `kwin-x11`, so that session had no compositor to start. The package
+is in the manifest now and `verify-iso.sh` refuses any image that offers a
+session whose compositor is missing. No run has yet reached the execution page,
+so installation and first boot remain untested end to end. The suite
 also reads back the installed security state, exercises `samurai-profile` and
 `samurai-recovery` on the installed system, and runs
 `build/measure-performance.sh` inside a live Plasma session when `--desktop` is
