@@ -48,7 +48,16 @@
 
 ### What the gate cannot yet satisfy
 
-The `samurai-linux-iso` artifact of build run `42105485811` is 2.74 GiB. GitHub
+The gate compares full SHAs, which has a cost worth stating before someone
+meets it: a commit after the green run - even a documentation-only one - makes
+that run green for a commit that is no longer the release candidate, and the
+release is refused. Re-run the install test against the same ISO artifact (the
+dispatch takes `run_id`, and the artifact survives seven days) rather than
+loosening the comparison, because "close enough" is exactly how a green run came
+to describe an image nobody could download.
+
+The `samurai-linux-iso` artifact of build run `42105485811` is 2,942,402,229
+bytes (2.74 GiB). GitHub
 refuses a release asset larger than 2 GiB, so on today's image steps 5-7 pass
 their checks and then fail at the upload - a tag with no release behind it, the
 worst of the two outcomes. `check_asset_pairing` therefore compares the ISO
