@@ -599,6 +599,7 @@ class InstallerTest:
         self.disk = self.work / "disk.qcow2"
         self.install_serial = self.work / "install-serial.log"
         self.qemu: subprocess.Popen | None = None
+        self.qemu_log: Path | None = None
         self.serial: SerialConsole | None = None
         self.timeout = args.timeout
         self.disk_size = args.disk_size
@@ -652,6 +653,7 @@ class InstallerTest:
     def _start_vm(self, extra: list[str], serial_sock: Path, qemu_log: Path) -> None:
         cmd = self._qemu_base() + extra
         serial_sock.unlink(missing_ok=True)
+        self.qemu_log = qemu_log
         with qemu_log.open("w", encoding="utf-8") as fh:
             self.log("starting VM: " + " ".join(cmd))
             self.qemu = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT)
@@ -1402,6 +1404,28 @@ class InstallerTest:
         self.vnc.wake()
         self.vnc.capture("08-timeout.png")
         raise Failure("timed out waiting for Calamares to finish")
+
+    def report_qemu_exit(self) -> None:
+        """Say whether the guest process survived at all.
+
+        Run 41987490634 lost its serial 32 seconds into boot with "Broken pipe"
+        and VNC answered "Connection refused" to all three screenshots. Both
+        mean the same thing - QEMU is gone - but nothing in the log said so, and
+        the one place that records why, QEMU's own output, sat unread.
+        """
+        if self.qemu is None:
+            return
+        status = self.qemu.poll()
+        try:
+            assert self.qemu_log
+            tail = self.qemu_log.read_text(errors="replace")[-1500:]
+        except OSError as exc:
+            tail = f"unreadable: {exc}"
+        self.log(
+            "QEMU "
+            + ("is still running" if status is None else f"exited with {status}")
+            + f"; its output ({self.qemu_log}):\n{tail}"
+        )
 
     def copy_calamares_log(self) -> None:
         """Copy the Calamares session log out over the serial line."""
@@ -2308,6 +2332,10 @@ def main() -> int:
         test.run()
     except Exception as exc:  # noqa: BLE001 - report everything as a CI failure
         test.log(f"FAILED: {exc}")
+        try:
+            test.report_qemu_exit()
+        except Exception:  # noqa: BLE001
+            pass
         try:
             test.vnc.capture("failure-final.png")
         except Exception:  # noqa: BLE001
