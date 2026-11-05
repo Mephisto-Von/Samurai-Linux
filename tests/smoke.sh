@@ -617,4 +617,25 @@ out=$(run_gate "$booted" "$no_module") && fail "the check accepts a tree with no
 assert_contains "$out" 'nf_tables module' "a missing module must be reported as such"
 ok "the live kernel/modules check runs on both layouts and reports what it saw"
 
+# 26. The release gate is the only thing between a commit and a tag that users
+# quote, so it is run here rather than trusted: its self-test decides whether a
+# green install test at another commit, an unsigned checksum or an ISO larger
+# than the release host accepts stops a publication. And the workflow that calls
+# it must not be able to fire on a push, which is how a release would appear
+# without anyone choosing to make one.
+bash "$REPO_ROOT/scripts/release-gate.sh" --self-test >/dev/null \
+    || fail "the release gate self-test failed"
+release_workflow="$REPO_ROOT/.github/workflows/release.yml"
+assert_file "$release_workflow"
+triggers=$(awk '/^on:/ { on = 1; next } on && /^[^[:space:]]/ { on = 0 }
+                on { sub(/#.*/, ""); print }' "$release_workflow")
+[[ "$triggers" == *workflow_dispatch* ]] \
+    || fail "the release workflow has no manual trigger"
+if grep -Eq 'push|pull_request|schedule|release_created|created' <<<"$triggers"; then
+    fail "the release workflow fires on something besides a person: $triggers"
+fi
+grep -q 'scripts/release-gate.sh --check' "$release_workflow" \
+    || fail "the release workflow publishes without consulting the gate"
+ok "the release gate refuses what it must and only a person can publish"
+
 printf '\nAll %d smoke checks passed.\n' "$pass"

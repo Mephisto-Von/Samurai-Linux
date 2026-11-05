@@ -1,0 +1,111 @@
+name: Release
+
+# Publish a Samurai Linux release: tag the commit, create the GitHub Release and
+# attach the ISO the green install test actually installed.
+#
+# Deliberately never automatic. Everything that makes a release trustworthy -
+# the build, the signature, the install test - already runs on push or on
+# dispatch; this is the one workflow whose output is a promise to users, so a
+# person starts it.
+#
+# The publication rules live in scripts/release-gate.sh, not here: it reads the
+# install-test runs for the commit, refuses to publish anything they did not
+# install, authenticates the bundle against samurai/keys/ and checks the ISO
+# against the release host's per-asset ceiling. This workflow only runs that
+# script and, if it passes, does what it says.
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Commit to release (SHA, tag or branch)"
+        required: true
+        type: string
+        default: main
+      tag:
+        description: "Release tag (vYYYY.MM or vYYYY.MM.N)"
+        required: true
+        type: string
+      dry_run:
+        description: "Run the gate and keep the bundle; create nothing"
+        required: false
+        type: boolean
+        default: true
+
+# Two dispatches at once would race on the same tag, and a half-published
+# release is worse than none: the tag would exist with no assets behind it.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    name: Gate and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      COMMIT: ${{ inputs.commit }}
+      TAG: ${{ inputs.tag }}
+      DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # The gate matches install-test runs by full SHA, and a dispatch that
+      # names `main` would otherwise match nothing and report "no green install
+      # test exists" for a commit that has one.
+      - name: Resolve the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${COMMIT}" --jq '.sha')
+          echo "COMMIT_SHA=$sha" >> "$GITHUB_ENV"
+          echo "release candidate: $sha"
+
+      # The gate needs the whole bundle, so a failure part-way through still
+      # leaves the artifact behind for whoever dispatched this.
+      - name: Run the release gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/release-gate.sh --check "$COMMIT_SHA" dist "$TAG"
+
+      - name: Report what would be published
+        run: |
+          set -euo pipefail
+          ls -lh dist
+          {
+            echo '## Release gate result'
+            echo
+            echo "Tag: \`$TAG\` (dry run: \`$DRY_RUN\`)"
+            echo
+            echo '```'
+            cat dist/release-notes.md
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Publishing is the one step that cannot be undone by a later run: a tag
+      # and a release are both visible to everyone and quoted in bug reports.
+      # The gate above decides whether they are deserved; this switch decides
+      # whether the person who dispatched it meant it.
+      - name: Publish the release
+        if: ${{ env.DRY_RUN == 'false' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to replace its assets" >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          assets=(dist/*.iso dist/*.sha256 dist/*.sig dist/*.packages.tsv dist/samurai-release-key.asc)
+          [[ -n "${assets[*]}" ]] || { echo "the gate left nothing in dist to publish" >&2; exit 1; }
+          gh release create "$TAG" --target "$COMMIT_SHA" --title "Samurai Linux $TAG" \
+            --notes-file dist/release-notes.md "${assets[@]}"
+          gh release view "$TAG" --json tagName,assets \
+            --jq '.tagName, (.assets[] | "  " + .name + " " + (.size | tostring))'
