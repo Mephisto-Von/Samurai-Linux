@@ -21,6 +21,7 @@ import argparse
 import base64
 import binascii
 import os
+import posixpath
 import re
 import shlex
 import shutil
@@ -928,35 +929,63 @@ class InstallerTest:
 
     # -- install flow --------------------------------------------------
 
+    def apply_calamares_overlay(self, path: str, keys: tuple[str, ...], entries: str) -> None:
+        """Add the test's choices to a shipped Calamares config, keeping the rest.
+
+        Calamares reads one YAML file per module, and the harness used to replace
+        those files wholesale - so the install ran with a configuration no user
+        ever has, silently dropping whatever the distribution sets around the
+        partition and bootloader jobs. Log the shipped file, delete only the keys
+        the test cares about, then append them.
+        """
+        assert self.serial
+        shipped = self.serial.command(
+            f"sed -n '1,80p' {shlex.quote(path)} 2>/dev/null || true", timeout=60, check=False
+        )
+        self.log(f"shipped {path}:\n{shipped[-1800:]}")
+        quoted = shlex.quote(path)
+        strip = "; ".join(
+            f"sed -i '/^{key}[[:space:]]*:/d' {quoted}" for key in keys
+        )
+        # posixpath, not Path: this is a path inside the guest, and a host
+        # pathlib on Windows turns /etc/calamares into \etc\calamares, which the
+        # guest would happily create as a directory named with backslashes.
+        self.serial.command(
+            f"mkdir -p {shlex.quote(posixpath.dirname(path))}; "
+            f"[ -f {quoted} ] || : > {quoted}; {strip}; "
+            f"printf '%s\\n' {shlex.quote(entries)} >> {quoted}",
+            timeout=90,
+        )
+
     def configure_calamares_for_test(self) -> None:
         """Preseed only the choices that would otherwise need a lot of clicking.
 
         The installer still goes through the real partition, mount, unpackfs,
         bootloader, packages and initramfs jobs.
         """
-        assert self.serial
-        self.serial.write_file(
+        self.apply_calamares_overlay(
             "/etc/calamares/modules/partition.conf",
-            "---\n"
+            ("initialPartitioningChoice", "initialSwapChoice", "defaultFileSystemType"),
             "initialPartitioningChoice: erase\n"
             "initialSwapChoice: none\n"
             "defaultFileSystemType: ext4\n",
         )
-        self.serial.write_file(
+        self.apply_calamares_overlay(
             "/etc/calamares/modules/grubcfg.conf",
-            "---\n"
+            ("overwrite", "keep_distributor", "prefer_grub_d", "kernel_params"),
+            # Quote the console argument: YAML flow sequences split on commas,
+            # which turned it into two kernel arguments (ttyS0 + 115200n8).
             "overwrite: false\n"
             "keep_distributor: false\n"
             "prefer_grub_d: false\n"
-            # Quote the console argument: YAML flow sequences split on commas,
-            # which turned it into two kernel arguments (ttyS0 + 115200n8).
             'kernel_params: [ quiet, "console=ttyS0,115200n8" ]\n',
         )
-        self.serial.write_file(
+        self.apply_calamares_overlay(
             "/etc/calamares/modules/locale.conf",
-            "---\nuseSystemTimezone: true\n",
+            ("useSystemTimezone",),
+            "useSystemTimezone: true\n",
         )
-        self.log("wrote Calamares test overlays")
+        self.log("applied Calamares test overlays")
 
     def report_firewall(self) -> None:
         """Put the firewall's actual state in the log rather than infer it.
@@ -1056,17 +1085,20 @@ class InstallerTest:
         # session's own bus where kded6 has been running since login, so borrow
         # that bus instead of inventing one; dbus-run-session is only a fallback.
         # Which desktop is actually running matters: run 41892892060 looked for
-        # plasmashell owned by "samurai" and found nobody, so it fell back to a
-        # private bus and died in the automount job again (the journal said
-        # "dbus-daemon[1365]: [session uid=0 ...]", a bus started for the
-        # installer rather than the one the session logged into).
+        # plasmashell and found nobody, so it fell back to a private bus and died
+        # in the automount job again (the journal said "dbus-daemon[1365]:
+        # [session uid=0 ...]", a bus started for the installer rather than the
+        # one the session logged into). Name the session's processes and let the
+        # user bus say in its own words whether root may use it.
         desktop = self.serial.command(
             "ls /run/user/ 2>/dev/null | tr '\\n' ' '; "
-            "pid=$(pgrep -f plasmashell | head -n1); "
-            "echo \"plasmashell=${pid:-none}\"; "
-            "[ -n \"$pid\" ] && stat -c 'plasmashell uid=%u' \"/proc/$pid\"; "
-            "[ -S /run/user/1000/bus ] && echo 'user bus socket=present' || echo 'user bus socket=absent'",
-            timeout=60,
+            "echo session-procs:; ps -e -o user=,comm= "
+            "| awk '$1==\"samurai\" || $1==\"live\"' | sort -u | head -n 14; "
+            "[ -S /run/user/1000/bus ] && echo 'user bus socket=present' "
+            "|| echo 'user bus socket=absent'; "
+            "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus "
+            "busctl --no-pager --user list 2>&1 | head -n 2",
+            timeout=90,
             check=False,
         )
         self.log("live desktop: " + " | ".join(line for line in desktop.splitlines() if line.strip()))
@@ -1074,6 +1106,8 @@ class InstallerTest:
             "DISPLAY=:0 XAUTHORITY=/root/.Xauthority QT_AUTO_SCREEN_SCALE_FACTOR=1 "
             "QT_QUICK_BACKEND=software sh -c '"
             'userbus=unix:path=/run/user/1000/bus; '
+            'echo "SAMURAI_DBUS_PROBE=$(DBUS_SESSION_BUS_ADDRESS=$userbus '
+            'busctl --no-pager --user list 2>&1 | head -n 1)"; '
             'if [ -S "$userbus" ] && DBUS_SESSION_BUS_ADDRESS="$userbus" '
             'busctl --no-pager --user list >/dev/null 2>&1; then '
             'echo "SAMURAI_DBUS=plasma:$userbus"; export DBUS_SESSION_BUS_ADDRESS="$userbus"; '
@@ -1083,15 +1117,20 @@ class InstallerTest:
             'else echo SAMURAI_DBUS=none; exec calamares -d; fi\' >/tmp/calamares.out 2>&1'
         )
         time.sleep(10)
-        # The marker is the first line the launcher writes, so read the head:
-        # reading the tail hid it behind Calamares' own startup output and run
+        # The markers are the first lines the launcher writes, so read the head:
+        # reading the tail hid them behind Calamares' own startup output and run
         # 41892892060 logged "not reported" for a fallback that had in fact run.
         head = self.serial.command(
-            "head -n 3 /tmp/calamares.out 2>/dev/null || true", timeout=30, check=False
+            "head -n 5 /tmp/calamares.out 2>/dev/null || true", timeout=30, check=False
         )
         bus_choice = re.search(r"SAMURAI_DBUS=(\S+)", head)
-        self.log(f"Calamares session bus: {bus_choice.group(1) if bus_choice else 'not reported'}")
+        bus_probe = re.search(r"SAMURAI_DBUS_PROBE=(.*)", head)
+        self.log(
+            f"Calamares session bus: {bus_choice.group(1) if bus_choice else 'not reported'}"
+            + (f"; user bus said: {bus_probe.group(1).strip()}" if bus_probe else "")
+        )
         self.dismiss_welcome()
+        tail = self.serial.command("tail -n 30 /tmp/calamares.out 2>/dev/null || true", timeout=30)
         running = self.serial.command("pgrep -x calamares >/dev/null && echo yes || echo no", timeout=30)
         if running.strip() != "yes":
             raise Failure(f"Calamares is not running; output:\n{tail}")
