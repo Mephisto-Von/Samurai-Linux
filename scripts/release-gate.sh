@@ -126,6 +126,12 @@ that choice is made names a release that cannot exist"
 
 # What the release body says. It names the evidence rather than describing the
 # product, because every claim a user cannot check is a claim nobody can falsify.
+#
+# The body is Markdown, and Markdown wants backticks around file names and
+# hashes. Inside single-quoted printf formats shellcheck reads each pair of them
+# as a command substitution that was meant to expand (SC2016) - the opposite of
+# what they are here, since the backticks belong in the emitted text.
+# shellcheck disable=SC2016
 write_release_notes() {
     local out=$1 iso=$2 iso_run=$3 install_run=$4 sha=$5 tag=$6
     local checksum
@@ -383,7 +389,7 @@ JSON
     GITHUB_REPOSITORY=owner/repo write_release_notes "$tmp/notes.md" \
         "$tmp/good/samurai-linux-2026.11.05-amd64.iso" 42105485811 42112234958 deadbeefsha v2026.11
     if grep -q 'runs/42112234958' "$tmp/notes.md" && grep -q 'runs/42105485811' "$tmp/notes.md" \
-        && grep -q 'SHA-256: `deadbeef`' "$tmp/notes.md"; then
+        && grep -qF "SHA-256: \`deadbeef\`" "$tmp/notes.md"; then
         log "ok - the release notes name the install run, the build run and the checksum"
     else
         log "FAIL: the release notes do not name their own evidence:"
