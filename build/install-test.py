@@ -1108,12 +1108,39 @@ class InstallerTest:
         )
         self.log(f"live input devices:\n{report[-2000:]}")
 
+    def report_installer_entry_point(self) -> None:
+        """Record how a person on the live desktop would actually start this.
+
+        installation.md promises a desktop icon or menu entry, and the test then
+        launches Calamares as root on a serial shell - which is not how anyone
+        installs a system. Whether that gap matters is answerable from the live
+        session: what launcher the image ships, what it execs (a plain
+        `calamares`, or a polkit elevation a real user has to authenticate to),
+        and what session the live user is sitting in.
+        """
+        assert self.serial
+        report = self.serial.command(
+            "echo 'live sessions:'; loginctl --no-pager list-sessions 2>&1 | head -n 6; "
+            "echo 'display manager:'; systemctl is-enabled sddm 2>&1; "
+            "echo 'desktop files that exec calamares:'; "
+            "grep -l -i 'calamares' /usr/share/applications/*.desktop "
+            "/etc/skel/Desktop/*.desktop 2>/dev/null | "
+            "while read -r f; do echo \"$f: $(sed -n 's/^Exec=//p' \"$f\" | head -n1)\"; done; "
+            "echo 'skel desktop:'; ls /etc/skel/Desktop 2>&1; "
+            "echo 'polkit actions:'; ls /usr/share/polkit-1/actions/ 2>/dev/null "
+            "| grep -i calamares || echo none",
+            timeout=120,
+            check=False,
+        )
+        self.log(f"live installer entry point:\n{report[-2500:]}")
+
     def launch_calamares(self) -> None:
         # The Debian wrapper moves the live fstab aside because it confuses
         # Calamares' partition module.
         assert self.serial
         self.report_firewall()
         self.report_input_devices()
+        self.report_installer_entry_point()
         self.serial.command(
             "if [ -e /etc/fstab ]; then mv /etc/fstab /etc/fstab.orig.calamares; fi",
             timeout=30,
