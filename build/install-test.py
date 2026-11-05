@@ -118,7 +118,12 @@ echo "SAMURAI_KDED=${kded:-absent} name=$kdedname owners=$(busctl --no-pager lis
 if [ -z "$busaddr" ] && [ -n "$kded" ] \
         && ! busctl --no-pager list 2>/dev/null | grep -q "$kdedname"; then
     [ -d /run/user/0 ] || install -d -m 0700 /run/user/0
-    HOME=/root XDG_RUNTIME_DIR=/run/user/0 "$kded" >/tmp/kded.out 2>&1 &
+    # kded is a Qt application and aborts (exit 134, "Available platform plugins
+    # are: ...") when it is started as root with no display to open, which is what
+    # run 41991858787 recorded as "alive=no" after one second. It needs no window
+    # to answer a D-Bus call, so give it the offscreen platform.
+    HOME=/root XDG_RUNTIME_DIR=/run/user/0 QT_QPA_PLATFORM=offscreen \
+        "$kded" >/tmp/kded.out 2>&1 &
     kdedpid=$!
     polls=0
     while [ "$polls" -lt 60 ]; do
