@@ -113,6 +113,20 @@
   live image starts by default. Nobody has reproduced the crash outside the CI
   VM, so whether it needs a software-rendered guest with no mirrorable DRM device
   or also happens on a real GPU is unknown.
+- **The live image's X11 session does not bring up a desktop** - two defects
+  were found while working around the one above. Run 41993508779 restarted SDDM
+  into `plasmax11` and got a session with no compositor at all, because Debian
+  ships `kwin_x11` in its own `kwin-x11` package and the image had never
+  installed it; the package is in the manifest now and `verify-iso.sh` refuses an
+  image that offers a session whose compositor is missing. Run 42105485811 had
+  the compositor installed (`/usr/bin/kwin_x11` present, Xorg running, logind
+  calling the session `Type=x11 State=active`) and still had neither
+  `startplasma-x11` nor `kwin_x11` in the process table, so SDDM selected the
+  session and the session's own program never ran. The cause is not established;
+  the install test now starts that session's `Exec=` itself and captures the SDDM
+  journal, the core-dump table and the session logs whichever way it goes, so an
+  X11 desktop in CI may be one the harness started rather than one the image
+  started on its own.
 
 ## Scope
 - **Single architecture** - x86_64 only; no ARM or RISC-V builds

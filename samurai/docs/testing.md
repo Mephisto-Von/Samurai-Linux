@@ -86,7 +86,13 @@ shipped `calamares-install-debian` wrapper does, and - because three runs ended
 with `kwin_wayland` segfaulting when Calamares painted its partition preview -
 switches the *live* session to Plasma on X11 before launching. The X11 switch is
 a test-environment change the run log names explicitly; a green run therefore
-proves the installer, not the Wayland live session it skipped. Pass criteria:
+proves the installer, not the Wayland live session it skipped. That switch has
+its own override: run 42105485811 restarted SDDM into `plasmax11` with the X11
+compositor installed and got a running Xorg with no desktop on it, so the test
+now also starts the session file's own `Exec=` when SDDM's autologin produces no
+compositor, and says in the log that it did. A green run therefore proves the
+installer on an X11 desktop, not that the live image can reach one by itself.
+Pass criteria:
 
 - Guided partitioning completes and the disk is bootable (MBR, `grub.cfg`,
   `core.img` present)
