@@ -139,6 +139,8 @@ unsquashfs -f -no-progress -d "$ROOT" "$SQUASHFS" \
     usr/share/color-schemes/samurai-kuro.colors \
     usr/share/color-schemes/samurai-shiro.colors \
     usr/share/applications/calamares-install-debian.desktop \
+    etc/xdg/autostart/calamares-desktop-icon.desktop \
+    usr/bin/add-calamares-desktop-icon \
     usr/share/backgrounds/samurai/kuro.jpg \
     usr/share/backgrounds/samurai/shiro.jpg \
     usr/share/samurai/boot/grub-splash.png \
@@ -178,6 +180,14 @@ assert_file etc/systemd/journald.conf.d/99samurai.conf
 assert_file usr/share/color-schemes/samurai-kuro.colors
 assert_file usr/share/color-schemes/samurai-shiro.colors
 assert_file usr/share/applications/calamares-install-debian.desktop
+# installation.md promises a desktop icon as well as a menu entry, and in
+# Debian's live configuration that icon is not on the ISO: an autostart entry
+# runs add-calamares-desktop-icon, which drops the launcher into the live
+# user's Desktop at login. Both halves have to be present or the icon never
+# appears and the documented step is a lie.
+assert_file etc/xdg/autostart/calamares-desktop-icon.desktop
+assert_file usr/bin/add-calamares-desktop-icon
+assert_contains etc/xdg/autostart/calamares-desktop-icon.desktop 'add-calamares-desktop-icon'
 assert_file usr/share/backgrounds/samurai/kuro.jpg
 assert_file usr/share/backgrounds/samurai/shiro.jpg
 assert_file usr/share/samurai/boot/grub-splash.png
