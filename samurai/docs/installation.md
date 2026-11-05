@@ -62,9 +62,11 @@ own key and signing the bootloader yourself.
    partition page, the Plasma Wayland compositor has crashed and taken the
    installer's display with it. Reboot, and if SDDM shows its login screen
    instead of logging in again, choose **Plasma (X11)** in the session menu
-   before starting the installer. This has been seen only in QEMU virtual
-   machines so far (see [`known-limitations.md`](known-limitations.md)), not on
-   physical hardware.
+   before starting the installer. Images built before the `kwin-x11` package
+   was added list that session but cannot start it, since the X11 compositor
+   was not installed; current builds ship it. This has been seen only in QEMU
+   virtual machines so far (see [`known-limitations.md`](known-limitations.md)),
+   not on physical hardware.
 
 ## Installation with Calamares
 
