@@ -10,7 +10,11 @@
   boots into Plasma to check theming and GameMode/MangoHud. The ISO builds and
   boots to SDDM in CI, but no install-test run has been green end to end, so
   partitioning, bootloader installation, and first boot on real hardware are
-  still unverified. See [`../../build/README.md`](../../build/README.md).
+  still unverified. The furthest a run has got is Calamares passing every
+  mandatory requirement check (storage, RAM, root, partitions) and building its
+  partition job queue - run 41989352435, which then lost the display server; no
+  run has reached the execution page where jobs write to disk. See
+  [`../../build/README.md`](../../build/README.md).
 - **No release tag or GitHub Release yet** - signing works and is proved in CI
   (the ISO, its checksum and the package manifest are signed, and the install
   test verifies them against the key committed under `samurai/keys/`), but no
@@ -97,6 +101,18 @@
   are still planned
 - **Plasma Wayland quirks** - some gaming overlays (MangoHUD) work best on X11
   sessions currently
+- **Installing from the Wayland live session can take the desktop down** - in
+  QEMU with a virtio-gpu device, three runs (41545976827, 41596964514,
+  41989352435) ended the same way: Calamares logs `Updating partitioning preview
+  widgets`, `kwin_wayland` then dies of SIGSEGV (coredumpctl names
+  `/usr/bin/kwin_wayland`, the backtrace is in `libkwin.so.6`), the session's
+  Xwayland dies with the compositor, and Calamares exits quoting `The X11
+  connection broke (error 1)`. The install test now switches the live session to
+  Plasma on X11 before starting Calamares and logs that it did, so what the test
+  can claim is the installer on an X11 desktop - not on the Wayland session the
+  live image starts by default. Nobody has reproduced the crash outside the CI
+  VM, so whether it needs a software-rendered guest with no mirrorable DRM device
+  or also happens on a real GPU is unknown.
 
 ## Scope
 - **Single architecture** - x86_64 only; no ARM or RISC-V builds

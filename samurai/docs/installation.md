@@ -58,6 +58,13 @@ own key and signing the bootloader yourself.
    updates or packages after installation.
 4. Start the installer from the desktop icon or the application menu entry
    **Install Samurai Linux**.
+5. If the whole desktop disappears a moment after you pick a target disk on the
+   partition page, the Plasma Wayland compositor has crashed and taken the
+   installer's display with it. Reboot, and if SDDM shows its login screen
+   instead of logging in again, choose **Plasma (X11)** in the session menu
+   before starting the installer. This has been seen only in QEMU virtual
+   machines so far (see [`known-limitations.md`](known-limitations.md)), not on
+   physical hardware.
 
 ## Installation with Calamares
 

@@ -78,7 +78,15 @@ For a GUI run, confirm that SDDM appears and the Plasma live session starts as
 
 ### 4. Installation Tests (automated, not yet green)
 `bash build/install-test.sh <iso>` drives the real Calamares UI in QEMU and
-checks the result over the serial console. Pass criteria:
+checks the result over the serial console. How it reaches the installer is part
+of the evidence: Calamares starts from a launcher that moves to the live
+desktop's D-Bus session when root may use it and otherwise reports that it did
+not, copies the live fstab aside and grants root the display the same way the
+shipped `calamares-install-debian` wrapper does, and - because three runs ended
+with `kwin_wayland` segfaulting when Calamares painted its partition preview -
+switches the *live* session to Plasma on X11 before launching. The X11 switch is
+a test-environment change the run log names explicitly; a green run therefore
+proves the installer, not the Wayland live session it skipped. Pass criteria:
 
 - Guided partitioning completes and the disk is bootable (MBR, `grub.cfg`,
   `core.img` present)
