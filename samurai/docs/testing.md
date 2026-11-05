@@ -88,10 +88,16 @@ switches the *live* session to Plasma on X11 before launching. The X11 switch is
 a test-environment change the run log names explicitly; a green run therefore
 proves the installer, not the Wayland live session it skipped. That switch has
 its own override: run 42105485811 restarted SDDM into `plasmax11` with the X11
-compositor installed and got a running Xorg with no desktop on it, so the test
-now also starts the session file's own `Exec=` when SDDM's autologin produces no
-compositor, and says in the log that it did. A green run therefore proves the
-installer on an X11 desktop, not that the live image can reach one by itself.
+compositor installed and got a running Xorg with no desktop on it, and run
+42112234958 showed why - the autologin drop-in was ignored, SDDM started the
+Wayland session anyway, and when it exited SDDM put a display on VT3 for its own
+greeter, so what looked like an empty X11 session was a login screen. The test
+now prints the image's SDDM configuration, disables every `Session=` key in it
+and states its own request last; if that still leaves no compositor it starts the
+session file's `Exec=` itself, after killing the greeter so it cannot draw over
+the installer, and says in the log that it did. A green run therefore proves the
+installer on an X11 desktop, not that the live image can autologin into one by
+itself.
 Pass criteria:
 
 - Guided partitioning completes and the disk is bootable (MBR, `grub.cfg`,

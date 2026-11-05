@@ -149,7 +149,7 @@ armored detached `.sig` when signing is enabled.
 | `live-build` ISO pipeline | Hosted workflow builds a bootable hybrid ISO |
 | CI (ShellCheck + smoke tests) | Passing on GitHub Actions |
 | Bootable ISO boot-tested | QEMU boot to SDDM verified in run `41545976827` (earlier `40346119925`) |
-| Calamares installer | ⚠️ Ships and branded; the scripted install-to-disk driver (`build/install-test.py`) walks the real wizard past every mandatory requirement and onto the partition page (run `41989352435`). No run has reached the execution page: in QEMU the live Plasma **Wayland** compositor (`kwin_wayland`) takes a SIGSEGV when the partition preview mounts targets, and Xwayland - and with it Calamares - goes down with it. The test switches the live session to X11, which exposed a third defect: the image offered an X11 session at login without installing `kwin-x11`, so that session had no compositor to start. The package is now in the manifest and `verify-iso.sh` refuses an image that offers a session whose compositor or session program is missing. Switching to that session still produced an Xorg with no desktop on it (run `42105485811`), so the test starts the session's own `Exec=` itself and logs that it did. No run has gone green yet |
+| Calamares installer | ⚠️ Ships and branded; the scripted install-to-disk driver (`build/install-test.py`) walks the real wizard past every mandatory requirement and onto the partition page (run `41989352435`). No run has reached the execution page: in QEMU the live Plasma **Wayland** compositor (`kwin_wayland`) takes a SIGSEGV when the partition preview mounts targets, and Xwayland - and with it Calamares - goes down with it. The test switches the live session to X11, which exposed a third defect: the image offered an X11 session at login without installing `kwin-x11`, so that session had no compositor to start. The package is now in the manifest and `verify-iso.sh` refuses an image that offers a session whose compositor or session program is missing. Switching to that session still produced an Xorg with no desktop on it (run `42105485811`), and run `42112234958` showed why: SDDM ignored the test's autologin drop-in, started the Wayland session, and when that exited it put a display on VT3 for its own **greeter** - a login screen, not a desktop. The test now disables the image's own `Session=` keys and states its request last, and if that still fails it kills the greeter and starts the session's own `Exec=` itself, logging that it did. No run has gone green yet |
 | Installed-system verification | Drives Calamares over VNC/OCR, boots the disk, checks GRUB, security state, package tooling |
 | Plasma desktop + MangoHUD verification | ⚠️ Automated (`--desktop` phase); not yet green |
 | Performance measurement | `build/measure-performance.sh` runs inside the installed desktop session and its report gates the run; no numbers published yet |
@@ -161,13 +161,25 @@ armored detached `.sig` when signing is enabled.
 ### Release status
 
 No tag and no GitHub Release exist yet, and none will be cut until an install
-test is green end to end - a tag is a promise that the ISO installs. The last
-pipeline that was green end to end is
+test is green end to end - a tag is a promise that the ISO installs. That rule
+is now mechanical rather than remembered: `scripts/release-gate.sh` picks the
+newest completed-successful **Install test** run at the commit being released,
+reads out of that run's log which build produced the ISO it installed,
+authenticates that artifact against `samurai/keys/`, and refuses anything else;
+`.github/workflows/release.yml` runs it and publishes only on a human dispatch
+with `dry_run` turned off. Two things stand between a green run and a published
+release. The first is the obvious one: there are no green runs. The second is a
+size limit nobody had checked - the `samurai-linux-iso` artifact of run
+`42105485811` is 2.74 GiB and GitHub refuses a release asset above 2 GiB, so the
+image has to shrink or the release has to live somewhere else, and that is a
+decision rather than a detail. The gate reports the number instead of silently
+failing at publish time.
+The last pipeline that was green end to end is
 [Build ISO (hosted) run `40346119925`](https://github.com/Mephisto-Von/Samurai-Linux/actions/runs/40346119925)
 (commit `028a2ac`, 2026-10-26) — it predates every installer fix since. Later
 runs built the ISO successfully but failed in the install test, so the newest
-ISO an install test has been driven against is from run `41802792291`; the
-first image carrying the `kwin-x11` fix is being built in run `42105485811`.
+ISO an install test has been driven against is from run `41802792291`; run
+`42105485811` is the first image carrying the `kwin-x11` fix.
 
 `RELEASE_DESCRIPTION.md` is retained as a historical build log. Its commands are
 superseded by `build/README.md`, and the claims it made that were never measured

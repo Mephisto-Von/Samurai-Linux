@@ -113,20 +113,28 @@
   live image starts by default. Nobody has reproduced the crash outside the CI
   VM, so whether it needs a software-rendered guest with no mirrorable DRM device
   or also happens on a real GPU is unknown.
-- **The live image's X11 session does not bring up a desktop** - two defects
-  were found while working around the one above. Run 41993508779 restarted SDDM
-  into `plasmax11` and got a session with no compositor at all, because Debian
-  ships `kwin_x11` in its own `kwin-x11` package and the image had never
-  installed it; the package is in the manifest now and `verify-iso.sh` refuses an
-  image that offers a session whose compositor is missing. Run 42105485811 had
-  the compositor installed (`/usr/bin/kwin_x11` present, Xorg running, logind
-  calling the session `Type=x11 State=active`) and still had neither
-  `startplasma-x11` nor `kwin_x11` in the process table, so SDDM selected the
-  session and the session's own program never ran. The cause is not established;
-  the install test now starts that session's `Exec=` itself and captures the SDDM
-  journal, the core-dump table and the session logs whichever way it goes, so an
-  X11 desktop in CI may be one the harness started rather than one the image
-  started on its own.
+- **The live image's X11 session does not come up through autologin** - two
+  defects were found while working around the one above. Run 41993508779
+  restarted SDDM into `plasmax11` and got a session with no compositor at all,
+  because Debian ships `kwin_x11` in its own `kwin-x11` package and the image had
+  never installed it; the package is in the manifest now and `verify-iso.sh`
+  refuses an image that offers a session whose compositor is missing. Run
+  42105485811 had the compositor installed and still showed an Xorg with nothing
+  running on it, which read as "the session's program never ran". Run
+  42112234958 said what actually happened: the SDDM journal shows
+  `Starting Wayland user session` even with `/etc/sddm.conf.d/99-install-test-x11.conf`
+  holding `Session=plasmax11`, that session exited after ten seconds, and SDDM
+  then put a display on VT3 for **its own greeter**. The X11 desktop two cycles
+  went looking for was a login screen with nobody logged in, and the autologin
+  request had been ignored - which of the image's own configuration outvoted the
+  drop-in is still not established. The install test now prints the live image's
+  SDDM configuration before it touches anything, comments out every `Session=`
+  key it finds, and writes its request to a drop-in named to sort last. If that
+  still produces no compositor the harness starts the session file's own `Exec=`
+  itself, kills the greeter first so it cannot draw over the installer, and says
+  in the log that it did: a green run may therefore show an X11 desktop the
+  harness logged into rather than one the image reached on its own, and the
+  ignored-autologin defect remains open in the image.
 
 ## Scope
 - **Single architecture** - x86_64 only; no ARM or RISC-V builds

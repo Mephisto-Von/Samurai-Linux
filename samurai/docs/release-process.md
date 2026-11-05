@@ -31,9 +31,33 @@
    the key committed in this repository.
 5. **Do not tag until the install test for that commit is green.** A tag is the
    promise that the ISO installs and boots; tagging an unverified build breaks
-   the promise before the artifact exists.
+   the promise before the artifact exists. `scripts/release-gate.sh --check SHA
+   DIST [TAG]` enforces the sentence: it takes the newest completed-successful
+   **Install test** run whose `head_sha` is this commit, reads the
+   `Using ISO artifact from run <id>` line out of that run's own log, requires
+   that build run to be completed and successful, downloads and authenticates
+   exactly that artifact, and dies otherwise - including when a green run exists
+   at a *different* commit, which is the mistake the artifact-reuse history
+   actually made. It publishes nothing that the install test did not install.
 6. Run the test suite (`testing.md`) and validate against the criteria below
-7. Publish ISO, checksum, signatures, manifest and release notes together
+7. Publish ISO, checksum, signatures, manifest and release notes together.
+   `.github/workflows/release.yml` does this, and only on a human dispatch: it
+   runs the gate, then `gh release create` with the notes the gate wrote
+   (`--target` the checked commit, never the workflow's own HEAD). `dry_run`
+   defaults to **true**, so dispatching it by habit publishes nothing.
+
+### What the gate cannot yet satisfy
+
+The `samurai-linux-iso` artifact of build run `42105485811` is 2.74 GiB. GitHub
+refuses a release asset larger than 2 GiB, so on today's image steps 5-7 pass
+their checks and then fail at the upload - a tag with no release behind it, the
+worst of the two outcomes. `check_asset_pairing` therefore compares the ISO
+against `SAMURAI_MAX_ASSET_BYTES` (default 2147483648) and stops before the tag.
+Resolving it means either slimming the image below 2 GiB - the desktop, firmware
+and language packagings are where the size is - or publishing the ISO somewhere
+that has no such limit and letting the GitHub Release link to it. That choice
+belongs to the project owner and is recorded here rather than made silently by
+a script.
 
 ## Release Acceptance Criteria
 
@@ -44,7 +68,7 @@ it:
 | # | Criterion | Status today |
 | --- | --- | --- |
 | 1 | Bootable ISO generated and validated | build and `verify-iso.sh` run in CI; a green install test is still outstanding |
-| 2 | Installation and first boot tested | the automated install test drives the real wizard past every mandatory requirement and onto the partition page (run `41989352435`); the earlier job-2 segfault is gone. No run has reached the execution page yet, because in QEMU the live Wayland compositor SIGSEGVs when the partition preview mounts targets and Calamares loses its display with it, and the X11 session the test falls back to had no compositor installed (`kwin-x11`, now added and gated by `verify-iso.sh`). Installation and first boot therefore remain unreached, and no green run has been recorded |
+| 2 | Installation and first boot tested | the automated install test drives the real wizard past every mandatory requirement and onto the partition page (run `41989352435`); the earlier job-2 segfault is gone. No run has reached the execution page yet, because in QEMU the live Wayland compositor SIGSEGVs when the partition preview mounts targets and Calamares loses its display with it, and the X11 session the test falls back to had no compositor installed (`kwin-x11`, now added and gated by `verify-iso.sh`); switching to it then left SDDM's **greeter** on the display, because the autologin drop-in the test wrote was ignored and the Wayland session it started in its place exited (runs `42105485811`, `42112234958`). Installation and first boot therefore remain unreached, and no green run has been recorded |
 | 3 | KDE Plasma works as the primary desktop | asserted by the desktop phase once it runs |
 | 4 | Kuro and Shiro themes persist and function | asserted by the desktop phase once it runs |
 | 5 | Developer profile usable | `samurai-profile` is tested on the installed system, but the guest has no network so real installs are not exercised |
@@ -55,7 +79,7 @@ it:
 | 13 | Recovery and upgrade procedures documented | documented; `samurai-recovery` is tested for snapshot/verify/restore-etc, not for a full state rollback |
 | 14 | Critical defects resolved or blocking release | tracked in `known-limitations.md` |
 | 15 | Build and release instructions complete | yes |
-| 16 | Checksums and GPG signature verify against the published ISO | signing and verification steps exist in CI and have never run on a green build |
+| 16 | Checksums and GPG signature verify against the published ISO | signing and verification steps exist in CI and have never run on a green build; `scripts/release-gate.sh` now verifies both against `samurai/keys/` before anything is published, and refuses an ISO larger than the release host accepts |
 | 17 | APT repository publication and upgrade path tested | **not met** - no Samurai APT repository exists |
 
 ## Signing and Publication

@@ -223,8 +223,14 @@ named rather than guessed. The test switches the live session to X11, which
 exposed a third defect: the image offered an X11 session at login without
 installing `kwin-x11`, so that session had no compositor to start. The package
 is in the manifest now and `verify-iso.sh` refuses any image that offers a
-session whose compositor is missing. No run has yet reached the execution page,
-so installation and first boot remain untested end to end. The suite
+session whose compositor is missing. Switching to that session then produced an
+Xorg with no desktop on it: run `42112234958` reads as the reason - SDDM ignored
+the test's `[Autologin] Session=` drop-in, started the Wayland session anyway,
+and when it exited ten seconds later SDDM put a display on VT3 for its own
+greeter. The test now disables the image's own `Session=` keys, states its
+request in a drop-in that sorts last, and falls back to starting the session
+file's `Exec=` itself after killing the greeter. No run has yet reached the
+execution page, so installation and first boot remain untested end to end. The suite
 also reads back the installed security state, exercises `samurai-profile` and
 `samurai-recovery` on the installed system, and runs
 `build/measure-performance.sh` inside a live Plasma session when `--desktop` is
