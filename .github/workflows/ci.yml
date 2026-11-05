@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install test dependencies
         run: |
-          apt-get install -y --no-install-recommends bash python3 shellcheck
+          apt-get install -y --no-install-recommends bash python3 shellcheck python3-pyflakes
       - name: Run smoke tests
         run: bash tests/smoke.sh
 

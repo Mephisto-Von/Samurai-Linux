@@ -63,6 +63,18 @@ import sys
 for path in sys.argv[1:]:
     ast.parse(pathlib.Path(path).read_text())
 PY
+    # A name that is never assigned parses fine, self-tests fine, and then stops
+    # a three-hour CI install run in its tracks: install-test.py died with
+    # "name 'tail' is not defined" after a rewrite deleted the line that set it.
+    # Only undefined names are fatal here; other lint opinions stay optional.
+    if python3 -m pyflakes --version >/dev/null 2>&1; then
+        undef=$(python3 -m pyflakes "$REPO_ROOT/scripts/use-heretic.py" \
+            "$REPO_ROOT/build/install-test.py" 2>&1 | grep "undefined" || true)
+        [ -z "$undef" ] || { printf 'not ok - python names that are used but never set:\n%s\n' "$undef"; exit 1; }
+        ok "no python name is used without being defined"
+    else
+        printf 'skip - pyflakes not installed\n'
+    fi
     python3 "$REPO_ROOT/build/install-test.py" --self-test >/dev/null
     ok "python scripts parse and the install harness self-test passes"
 fi
