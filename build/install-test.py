@@ -1205,7 +1205,7 @@ class InstallerTest:
             check=False,
         )
         self.log("live desktop: " + " | ".join(line for line in desktop.splitlines() if line.strip()))
-        self.write_file(CALAMARES_LAUNCHER_PATH, CALAMARES_LAUNCHER)
+        self.serial.write_file(CALAMARES_LAUNCHER_PATH, CALAMARES_LAUNCHER)
         launcher = shlex.quote(CALAMARES_LAUNCHER_PATH)
         self.serial.command(f"chmod 0755 {launcher}", timeout=30)
         if (

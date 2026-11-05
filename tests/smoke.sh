@@ -63,6 +63,49 @@ import sys
 for path in sys.argv[1:]:
     ast.parse(pathlib.Path(path).read_text())
 PY
+    # A call to a method the class does not have parses fine, passes pyflakes,
+    # and only shows up when that line runs: run 41988375810 lost its whole CI
+    # cycle to "InstallerTest object has no attribute write_file" because the
+    # rewrite called the serial console's helper on the harness instead. Every
+    # self.<name>(...) is therefore checked against what that class really
+    # defines - methods plus attributes assigned anywhere in the module.
+    python3 - "$REPO_ROOT/build/install-test.py" "$REPO_ROOT/scripts/use-heretic.py" <<'PY'
+import ast
+import pathlib
+import sys
+
+bad = []
+for path in sys.argv[1:]:
+    tree = ast.parse(pathlib.Path(path).read_text())
+    assigned = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+        and isinstance(node.ctx, ast.Store)
+    }
+    for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
+        own = {
+            f.name
+            for f in cls.body
+            if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for node in ast.walk(cls):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "self"
+            ):
+                name = node.func.attr
+                if name not in own and name not in assigned:
+                    bad.append(f"{path}:{node.lineno}: self.{name}() is not defined")
+if bad:
+    print("\n".join(bad))
+    sys.exit(1)
+PY
+    ok "every method the harness calls on itself exists"
     # A name that is never assigned parses fine, self-tests fine, and then stops
     # a three-hour CI install run in its tracks: install-test.py died with
     # "name 'tail' is not defined" after a rewrite deleted the line that set it.
