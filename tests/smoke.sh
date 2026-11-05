@@ -345,6 +345,17 @@ if SAMURAI_RECOVERY_STORE="$TMP/rec" \
     bash "$REPO_ROOT/samurai/scripts/samurai-recovery" restore-etc 2026-01-01T000000Z etc/passwd >/dev/null 2>&1; then
     fail "restore-etc accepted a relative path"
 fi
+# A snapshot named the way `list` and `verify` print it - its absolute path -
+# has to be the snapshot, not one of the files. Run 42121878962 lost its whole
+# installed-system phase because an absolute first argument was sorted into the
+# file list and tar answered "Not found in archive".
+snapshot_abs="$TMP/rec/2026-01-01T000000Z"
+if out=$(SAMURAI_RECOVERY_STORE="$TMP/rec" \
+        bash "$REPO_ROOT/samurai/scripts/samurai-recovery" restore-etc "$snapshot_abs" 2>&1); then
+    fail "restore-etc accepted a snapshot with no files to restore"
+fi
+assert_contains "$out" "needs at least one file" \
+    "an absolute snapshot path must be the selector, not a file: $out"
 SAMURAI_RECOVERY_STORE="$TMP/rec" bash "$REPO_ROOT/samurai/scripts/samurai-recovery" --help | grep -q 'restore-packages' \
     || fail "samurai-recovery does not document package rollback"
 ok "recovery commands fail closed on ambiguous input"

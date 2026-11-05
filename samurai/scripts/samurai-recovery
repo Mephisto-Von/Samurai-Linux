@@ -138,9 +138,15 @@ cmd_verify() {
 
 cmd_restore_etc() {
     local dir snap="" file
-    # A first argument that is not an absolute path is a snapshot selector; the
-    # files to restore always begin with /, so the two are never ambiguous.
-    if (( $# > 0 )) && [[ "$1" != /* ]]; then
+    # The first argument selects a snapshot when it cannot be a file to
+    # restore: anything that is not an absolute path is a snapshot name, and an
+    # absolute path that is an existing directory is one too. A file is never a
+    # directory, so the two readings cannot both apply. Deciding this by "is it
+    # absolute" cost a 45-minute install-test cycle (run 42121878962): the
+    # harness passed the snapshot the way `verify` and `list` print it -
+    # /var/lib/samurai/recovery/<stamp> - and that path was sorted into the file
+    # list, where tar answered "Not found in archive".
+    if (( $# > 0 )) && { [[ $1 != /* ]] || [[ -d $1 ]]; }; then
         snap=$1
         shift
     fi
