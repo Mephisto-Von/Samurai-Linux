@@ -1233,9 +1233,29 @@ class InstallerTest:
         )
         self.log("live session after restart: " + " | ".join(line for line in back.splitlines() if line.strip()))
         if "x11=yes" not in back:
+            # "no kwin_x11" has at least three causes and they are not
+            # distinguishable from the wait loop's answer: the compositor binary
+            # may not be installed (run 41993508779: Debian puts kwin_x11 in its
+            # own package and the image had not installed it), the session may
+            # have come back on Wayland, or X itself may have failed. Ask which
+            # of those it is before giving up.
+            detail = self.serial.command(
+                "ps -e -o pid=,comm= | grep -E 'kwin|Xorg|Xwayland|startplasma' | head -n 8; "
+                "echo 'compositor binaries:'; ls -l /usr/bin/kwin_x11 /usr/bin/kwin_wayland 2>&1; "
+                "echo 'session types:'; "
+                "for s in $(loginctl --no-pager list-sessions 2>/dev/null | awk 'NR>1{print $1}'); do "
+                'echo "$s $(loginctl --no-pager show-session "$s" -p Type -p State -p TTY '
+                '2>/dev/null | tr \'\\n\' \' \')"; done; '
+                "echo 'xorg session log:'; "
+                "tail -n 20 /home/samurai/.local/share/sddm/xorg-session.log 2>&1",
+                timeout=120,
+                check=False,
+            )
+            self.log("why the X11 session did not come up:\n" + detail[-3000:])
             raise Failure(
-                f"the live session did not come back on X11 as {session!r}: {back.strip()!r}; "
-                f"X11 session files present: {listing.strip()}"
+                f"the live session did not come back on X11 as {session!r}; "
+                f"sessions after restart: {back.strip()!r}\n"
+                f"what the guest says is running:\n{detail[-2500:]}"
             )
 
     def prepare_root_display(self) -> None:

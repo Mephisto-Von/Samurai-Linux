@@ -19,6 +19,13 @@ okular
 kde-spectacle
 xserver-xorg
 xwayland
+# Debian splits KWin by session type: plasma-workspace ships both session
+# entries and startplasma-x11, but the X11 compositor itself is the kwin-x11
+# package. Without it the login screen offers "Plasma (X11)", starting it gets a
+# session with no window manager, and the Wayland-crash advice in
+# samurai/docs/installation.md points at a session that cannot run
+# (run 41993508779 restarted SDDM into plasmax11 and found no kwin_x11).
+kwin-x11
 pipewire
 pipewire-pulse
 wireplumber

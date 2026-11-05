@@ -539,4 +539,36 @@ while IFS= read -r package; do
     fi
 done < <(grep -Ev '^[[:space:]]*(#|$)' "$REPO_ROOT/build/config/package-lists/samurai.list.chroot")
 
+# A display manager offers every file in these directories as a selectable
+# session, and installation.md tells a user whose Wayland compositor has just
+# crashed to choose "Plasma (X11)" instead. Debian splits KWin by session type:
+# plasma-workspace ships both entries and both startplasma scripts, but the X11
+# compositor is the separate kwin-x11 package. Run 41993508779 restarted SDDM
+# into plasmax11 and got a session with no window manager in it, so an offered
+# session whose compositor is missing is a broken promise in the shipped image,
+# not a quirk of the test.
+log "Checking that every session the login screen offers can start its compositor"
+if ! unsquashfs -f -no-progress -d "$ROOT" "$SQUASHFS" \
+    usr/share/xsessions usr/share/wayland-sessions >/dev/null 2>&1; then
+    [[ -e "$ROOT/usr/share/xsessions" || -e "$ROOT/usr/share/wayland-sessions" ]] \
+        || die "the live rootfs has no display manager session entries at all"
+fi
+offered=0
+for dir in usr/share/xsessions usr/share/wayland-sessions; do
+    for entry in "$ROOT/$dir"/*.desktop; do
+        [[ -e "$entry" ]] || continue
+        offered=$((offered + 1))
+        if [[ "$dir" == usr/share/xsessions ]]; then
+            need=kwin-x11
+        else
+            need=kwin-wayland
+        fi
+        if ! grep -q "^${need}${TAB}" "$MANIFEST"; then
+            die "${entry#"$ROOT"/} is selectable at login but $need is not installed: the session would start with no compositor"
+        fi
+    done
+done
+((offered > 0)) || die "no session entries were found to check"
+log "Session entries checked: $offered, each with its compositor installed"
+
 log "ISO verification passed"
