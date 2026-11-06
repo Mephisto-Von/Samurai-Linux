@@ -1,0 +1,17 @@
+# Pinning for the Kali archive, as it ships in the installed image.
+#
+# Same rule as kali.pref.chroot, and it has to be: the installed system keeps
+# the Kali source (kali.list.binary), so without this pin the first
+# `apt-get install` of anything that exists in both archives - nmap, john,
+# hashcat, wireshark, libssl - could be answered from kali-rolling, and a
+# trixie system would start turning into Kali one command at a time. tests/
+# smoke.sh checks the two files agree on the number, because "they should match"
+# is not a rule anyone can see being kept.
+#
+# Priority 50 is the number that makes "Debian first, Kali for what Debian does
+# not carry" true rather than aspirational; apt_preferences(5) documents 50 as
+# installable-but-not-preferred, which is also what Debian itself uses for sid
+# in a mixed system.
+Package: *
+Pin: release n=kali-rolling
+Pin-Priority: 50

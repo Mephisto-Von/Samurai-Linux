@@ -1,0 +1,23 @@
+# The Kali archive, for building the `security` variant.
+#
+# This file is not read by a desktop build: build/build.sh stages it into
+# config/archives/ only when SAMURAI_VARIANT=security, and removes it otherwise,
+# because live-build installs every config/archives/*.list.chroot it finds and
+# has no notion of a variant.
+#
+# It is a `.chroot` file, so live-build writes it into the build chroot for the
+# package-install pass and takes it out again afterwards; the copy meant for the
+# image a user boots is kali.list.binary. Both are checked into the repository
+# side by side rather than generated, so reading this directory says exactly
+# which archives a given image was built against.
+#
+# https and not http: Debian's own mirror stays on http because it is
+# authenticated by Release-file signature against the packaged Debian keyring,
+# and the same is true here - but a third-party archive that can be replaced by
+# anyone on the network path should not be given the benefit of the doubt.
+#
+# All four components exist in kali-rolling (verified against
+# dists/kali-rolling/<component>/binary-amd64/Packages.gz before this file was
+# written); a component that disappeared would fail `apt-get update` in the
+# build rather than silently ship a shorter toolset.
+deb [ arch=amd64 ] https://archive.kali.org/kali kali-rolling main contrib non-free non-free-firmware

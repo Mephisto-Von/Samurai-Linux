@@ -8,6 +8,7 @@ TMP_DIR=""
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)
 
 log() { printf '==> %s\n' "$*"; }
+warn() { printf 'Warning: %s\n' "$*" >&2; }
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 
 cleanup() {
@@ -92,8 +93,11 @@ log "Checking Samurai bootloader branding"
 # The menu title carries the build date (YYYY.MM.DD) and the ISO file is named
 # after the same date, so a stale hardcoded title cannot slip through.
 ISO_DATE=""
-if [[ $(basename "$ISO") =~ samurai-linux-([0-9]{4}\.[0-9]{2}\.[0-9]{2})-amd64\.iso$ ]]; then
-    ISO_DATE="${BASH_REMATCH[1]}"
+# samurai-linux-... is the desktop artifact and samurai-security-... the
+# security one (build/build.sh: ISO_PREFIX). Both carry the build date in the
+# same place, so the menu title is checked against the file name either way.
+if [[ $(basename "$ISO") =~ samurai-(linux|security)-([0-9]{4}\.[0-9]{2}\.[0-9]{2})-amd64\.iso$ ]]; then
+    ISO_DATE="${BASH_REMATCH[2]}"
 fi
 if [[ -n "$ISO_DATE" ]]; then
     assert_file_contains "$TMP_DIR/menu.cfg" "^menu title Samurai Linux ${ISO_DATE//./\\.}$"
@@ -405,6 +409,27 @@ assert_contains etc/systemd/journald.conf.d/99samurai.conf '^Storage=persistent$
 assert_contains usr/local/bin/samurai-profile '^profile_packages\(\) \{$'
 assert_contains usr/local/bin/samurai-recovery '^cmd_snapshot\(\) \{$'
 
+# Which image is this? The build stages /etc/samurai-variant (build/
+# stage-variant.sh), and everything below reads it instead of the environment:
+# the checks that follow have to follow the image, because an ISO that says it
+# is the security variant is being verified for its own declared package list
+# whatever the machine verifying it thinks it built.
+unsquashfs -f -no-progress -d "$ROOT" "$SQUASHFS" etc/samurai-variant >/dev/null 2>&1 || true
+VARIANT="desktop"
+if [[ -f "$ROOT/etc/samurai-variant" ]]; then
+    VARIANT=$(head -n1 "$ROOT/etc/samurai-variant" | tr -d '[:space:]')
+    case "$VARIANT" in
+        desktop|security) ;;
+        *) die "/etc/samurai-variant says '$VARIANT', which is not a variant this build system knows" ;;
+    esac
+else
+    # Images built before variant staging existed simply have no such file.
+    # Assuming desktop keeps them verifiable; requiring the file would only
+    # mean an old ISO cannot be examined any more.
+    warn "no /etc/samurai-variant: built before variant staging, verifying as desktop"
+fi
+log "Verifying the '$VARIANT' variant"
+
 # Unattended upgrades are only real if an archive exists to upgrade from. The
 # shipped source list is written by live-build from --mirror-binary-security and
 # is gated on --security in build/auto/config, so this is the only place that
@@ -416,12 +441,16 @@ unsquashfs -f -no-progress -d "$ROOT" "$SQUASHFS" etc/apt/sources.list >/dev/nul
 unsquashfs -f -no-progress -d "$ROOT" "$SQUASHFS" etc/apt/sources.list.d >/dev/null 2>&1 || true
 sources_found=0
 sources_named=()
+kali_sources=()
 for source in "$ROOT/etc/apt/sources.list" "$ROOT/etc/apt/sources.list.d"/*.list \
     "$ROOT/etc/apt/sources.list.d"/*.sources; do
     [[ -e "$source" ]] || continue
     if grep -q 'trixie-security' "$source"; then
         sources_found=$((sources_found + 1))
         sources_named+=("$source")
+    fi
+    if grep -q 'kali-rolling' "$source"; then
+        kali_sources+=("${source#"$ROOT"/}")
     fi
 done
 if ((sources_found == 0)); then
@@ -437,6 +466,37 @@ fi
 # makes apt print "Target Packages is configured multiple times" on every run.
 if ((sources_found > 1)); then
     die "the security archive is configured ${sources_found} times: ${sources_named[*]}"
+fi
+
+# The Kali archive is the security variant's entire difference from the desktop
+# one, and getting it wrong is silent in both directions: a security image whose
+# second source never reached the build is a renamed desktop image, and a desktop
+# image that picked the source up would ship a rolling archive no user asked for.
+# Both are refused here rather than left to the next apt run.
+if [[ "$VARIANT" == security ]]; then
+    (( ${#kali_sources[@]} > 0 )) \
+        || die "the security image configures no Kali archive, so no tool here can be upgraded"
+    pin_found=0
+    for pin in "$ROOT/etc/apt/preferences.d"/*; do
+        [[ -f "$pin" ]] || continue
+        # Anchored to the Pin: line, so a comment that merely mentions the
+        # release name cannot be mistaken for the stanza.
+        grep -Eq '^[[:space:]]*Pin:[[:space:]]*release[[:space:]]+n=kali-rolling([[:space:]]|$)' "$pin" \
+            || continue
+        pin_found=1
+        # live-build renames archives' preference files, so the priority is read
+        # from whichever file carries the stanza rather than from a fixed path.
+        priority=$(grep -A1 -E '^[[:space:]]*Pin:[[:space:]]*release[[:space:]]+n=kali-rolling([[:space:]]|$)' "$pin" \
+            | sed -n 's/^Pin-Priority:[[:space:]]*//p' | head -n1)
+        declared_priority=$(sed -n 's/^Pin-Priority:[[:space:]]*//p' \
+            "$REPO_ROOT/build/variants/security/archives/kali.pref.chroot" | head -n1)
+        [[ "$priority" == "$declared_priority" ]] \
+            || die "${pin#"$ROOT"/} pins kali-rolling at '${priority:-nothing}', the build declares '$declared_priority': a higher number lets a rolling archive replace Debian libraries under Plasma"
+    done
+    ((pin_found)) || die "the security image configures the Kali archive without pinning it"
+    log "Kali archive configured ${#kali_sources[@]} time(s): ${kali_sources[*]}"
+elif (( ${#kali_sources[@]} > 0 )); then
+    die "the desktop image configures a Kali archive: ${kali_sources[*]}"
 fi
 log "Checking the permissions the image records for those files"
 # $TMP_DIR/squashfs-modes.tsv, built above, is the squashfs metadata listing.
@@ -532,12 +592,44 @@ done
 # Everything the package lists declare must be in the image. live-build would
 # have failed on an unfetchable name, so this catches the quieter mistake: a list
 # that was trimmed, or a package that stopped being installed and nobody noticed.
-while IFS= read -r package; do
-    [[ -n "$package" ]] || continue
-    if ! grep -q "^${package}${TAB}" "$MANIFEST"; then
-        die "$package is declared in samurai.list.chroot but absent from the image"
-    fi
-done < <(grep -Ev '^[[:space:]]*(#|$)' "$REPO_ROOT/build/config/package-lists/samurai.list.chroot")
+# The lists are read from build/variants/ and build/config/, never from the
+# staged config tree: a build that failed to stage the security list would then
+# verify against the tree it had produced, and a silently shortened image would
+# pass its own gate.
+declared_lists=("$REPO_ROOT/build/config/package-lists/samurai.list.chroot")
+if [[ "$VARIANT" == security ]]; then
+    declared_lists+=("$REPO_ROOT/build/variants/security/package-lists/samurai-security.list.chroot")
+fi
+for declared in "${declared_lists[@]}"; do
+    [[ -f "$declared" ]] || die "the $VARIANT variant declares no list at $declared"
+    while IFS= read -r package; do
+        [[ -n "$package" ]] || continue
+        if ! grep -q "^${package}${TAB}" "$MANIFEST"; then
+            die "$package is declared in $(basename "$declared") but absent from the image"
+        fi
+    done < <(grep -Ev '^[[:space:]]*(#|$)' "$declared")
+done
+
+# Kali-only names are the proof that the second archive reached the build at all.
+# Runs 41447034423 and 41452920694 shipped an image whose configured security
+# archive was simply not there; a pinned archive that is dropped the same way
+# would leave a "security" ISO that is only a desktop ISO with a different name,
+# and every declared-list check above would still pass if the list had been
+# trimmed to match. Debian has no metasploit-framework and no netexec, so either
+# name in the manifest can only have come from kali-rolling.
+if [[ "$VARIANT" == security ]]; then
+    for package in metasploit-framework netexec; do
+        version=$(grep -m1 "^${package}${TAB}" "$MANIFEST" | cut -f2)
+        [[ -n "$version" ]] || die "the security image does not install $package, which only the Kali archive provides"
+        # Kali revisions normally carry the string "kali" (measured:
+        # 6.5.7-0kali1, 1.5.1-0kali2). It is the archive's convention rather
+        # than a promise, so a version without it is reported, not fatal - the
+        # package's presence above is already the proof the archive was used.
+        if [[ "$version" != *kali* ]]; then
+            warn "$package is installed at '$version', which is not a Kali-looking version string"
+        fi
+    done
+fi
 
 # A display manager offers every file in these directories as a selectable
 # session, and installation.md tells a user whose Wayland compositor has just

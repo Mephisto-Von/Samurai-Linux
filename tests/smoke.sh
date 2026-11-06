@@ -649,4 +649,105 @@ grep -q 'scripts/release-gate.sh --check' "$release_workflow" \
     || fail "the release workflow publishes without consulting the gate"
 ok "the release gate refuses what it must and only a person can publish"
 
+# 27. The security variant is a second APT source in a distribution that promises
+# only Debian, so the two properties that make it survivable are checked here
+# rather than on a build host: that nothing variant-owned reaches the desktop
+# configuration, and that the Kali archive is pinned below Debian instead of
+# beside it. Both are decidable from the repository alone, and both would regress
+# silently - the first by shipping Kali libraries in a Plasma image nobody asked
+# for, the second by letting a rolling suite replace the base system underneath it.
+variant_archives="$REPO_ROOT/build/variants/security/archives"
+variant_list="$REPO_ROOT/build/variants/security/package-lists/samurai-security.list.chroot"
+assert_file "$variant_list"
+for kind in list pref key; do
+    assert_file "$variant_archives/kali.$kind.chroot"
+    assert_file "$variant_archives/kali.$kind.binary"
+done
+# The chroot pass installs the source, resolves the toolset and then removes it
+# again; the image only keeps what the binary pass installs. The two files carry
+# different comments on purpose - each explains its own pass - so the pair is
+# compared by what apt reads, not byte for byte: the key has to be the same key,
+# and the source and the pin have to be the same stanza.
+cmp -s "$variant_archives/kali.key.chroot" "$variant_archives/kali.key.binary" \
+    || fail "the Kali key differs between the build chroot and the image"
+for kind in list pref; do
+    diff -u \
+        <(grep -Ev '^[[:space:]]*(#|$)' "$variant_archives/kali.$kind.chroot") \
+        <(grep -Ev '^[[:space:]]*(#|$)' "$variant_archives/kali.$kind.binary") \
+        >/dev/null \
+        || fail "kali.$kind.chroot and kali.$kind.binary disagree on what apt is told"
+done
+# live-build reads config/package-lists and config/archives with a non-recursive
+# glob, which is why build/variants/ is inert until build/stage-variant.sh copies
+# it. Checked-in variant content in the tree live-build reads would ship in the
+# desktop image, and no build output would say so.
+for stray in "$REPO_ROOT/build/config/package-lists"/*security* \
+    "$REPO_ROOT/build/config/archives"/*kali* \
+    "$REPO_ROOT/build/config/includes.chroot/etc/apt/sources.list.d"/*kali*; do
+    [[ -e "$stray" ]] && fail "the desktop configuration tree carries variant content: $stray"
+done
+ok "no variant content is checked into the configuration live-build reads"
+
+# Package: * with a number below Debian's 500 is the whole of "Debian first".
+pin="$variant_archives/kali.pref.chroot"
+awk 'BEGIN { OFS = "\n" }
+     /^Package:[[:space:]]*\*[[:space:]]*$/ { package = 1 }
+     /^Pin:[[:space:]]*release n=kali-rolling[[:space:]]*$/ { release = 1 }
+     /^Pin-Priority:[[:space:]]*[0-9]+[[:space:]]*$/ {
+         priority = $2
+         if (package && release) print priority
+         package = 0; release = 0
+     }' "$pin" > "$TMP/kali-pin"
+pin_priority=$(head -n1 "$TMP/kali-pin")
+[[ -n "$pin_priority" ]] || fail "kali.pref.chroot does not pin n=kali-rolling under Package: *"
+((pin_priority > 0 && pin_priority < 500)) \
+    || fail "kali-rolling is pinned at $pin_priority; it must be above 0 to be installable and below Debian's 500"
+priorities=$(grep -c '^Pin-Priority:' "$pin")
+[[ "$priorities" == 1 ]] \
+    || fail "kali.pref.chroot carries $priorities Pin-Priority lines, so the pin below 500 is not the only rule"
+# Below zero would forbid installation outright, which the plan considered and
+# rejected: a maximal toolset cannot resolve a Kali-only dependency closure then.
+ok "the Kali archive is pinned at $pin_priority: installable, never preferred"
+
+if command -v gpg >/dev/null 2>&1; then
+    kali_keyring="$TMP/kali-gnupg"
+    mkdir -p "$kali_keyring"
+    chmod 700 "$kali_keyring"
+    GNUPGHOME="$kali_keyring" gpg --batch --import "$variant_archives/kali.key.chroot" \
+        >/dev/null 2>&1 || fail "gpg could not import the committed Kali archive key"
+    kali_listed=$(GNUPGHOME="$kali_keyring" gpg --batch --with-colons --list-keys \
+        | awk -F: '$1 == "fpr" { print $10; exit }')
+    kali_documented=$(tr -d '[:space:]' < "$variant_archives/kali.key.fpr")
+    [[ "$kali_listed" == "$kali_documented" ]] \
+        || fail "the Kali key reports fingerprint ${kali_listed:-none}, not the recorded $kali_documented"
+    # An expired archive key fails every apt run in the build, and the failure
+    # looks like a network problem. The expiry is printed here so the date a
+    # build dies on is written down before someone has to rediscover it.
+    kali_expiry=$(GNUPGHOME="$kali_keyring" gpg --batch --with-colons --list-keys \
+        | awk -F: '$1 == "pub" { print $7; exit }')
+    if [[ -n "$kali_expiry" && "$kali_expiry" != "0" ]] \
+        && (( $(date +%s) > kali_expiry )); then
+        fail "the Kali archive key expired on $(date -d "@$kali_expiry" +%Y-%m-%d); the security variant cannot build until it is replaced"
+    fi
+    ok "the committed Kali archive key matches its recorded fingerprint and has not expired"
+else
+    printf 'skip - gpg not installed, the Kali key was not examined\n'
+fi
+
+# Staging is the only thing standing between "the variant exists in the
+# repository" and "the variant reached the image", so its own contract is run:
+# desktop stages nothing extra, security stages its three files, and switching
+# back to desktop leaves no Kali source behind.
+bash "$REPO_ROOT/build/stage-variant.sh" --self-test >/dev/null \
+    || fail "build/stage-variant.sh --self-test failed"
+ok "variant staging is idempotent and leaves nothing behind when switched off"
+
+# The image-side gates have to read the image, not the tree it came from.
+verify="$REPO_ROOT/build/verify-iso.sh"
+grep -q '/etc/samurai-variant' "$verify" \
+    || fail "build/verify-iso.sh no longer reads the variant the image declares"
+grep -q 'variants/security/package-lists/samurai-security.list.chroot' "$verify" \
+    || fail "build/verify-iso.sh no longer requires every declared security tool to be installed"
+ok "the ISO verifier follows the variant the image declares"
+
 printf '\nAll %d smoke checks passed.\n' "$pass"

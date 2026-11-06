@@ -1,0 +1,15 @@
+# The Kali archive, as it ships in the installed `security` image.
+#
+# The installed system needs this source for the same reason the build chroot
+# did: a metapackage whose members came from here can only be upgraded from
+# here. Removing it would leave the tools unfixable - `apt-get upgrade` would
+# not see the newer versions, and samurai-recovery restore-packages compares
+# against a package list an archive can no longer satisfy.
+#
+# Shipping it is not the same as trusting it for automatic changes:
+# unattended-upgrades is configured with Allowed-Origins "Debian:trixie-security"
+# only (etc/apt/apt.conf.d/20samurai-security), so nothing from this archive is
+# ever upgraded without the user asking. That is the trade this variant makes,
+# and samurai/docs/known-limitations.md states it as a limitation rather than a
+# feature: Kali-sourced tools receive no automatic security patches.
+deb [ arch=amd64 ] https://archive.kali.org/kali kali-rolling main contrib non-free non-free-firmware

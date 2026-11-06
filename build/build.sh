@@ -4,18 +4,51 @@ set -euo pipefail
 
 BUILD_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 REPO_ROOT=$(cd -- "$BUILD_DIR/.." && pwd)
-MIN_DISK_GB="${SAMURAI_MIN_DISK_GB:-50}"
+
+# Two images come out of one image definition. `desktop` is what the repository
+# shipped until the owner asked for a second, larger variant; `security` adds an
+# archive, a tool list and a pin file from build/variants/security.
+VARIANT="${SAMURAI_VARIANT:-desktop}"
+
+# The disk floor is per variant because the work is not comparable: a desktop
+# chroot fits in 50 GiB, while a chroot carrying a full offensive tool archive
+# needs the installed tree, the binary copy of it and the squashfs of that
+# roughly at once. Overridable, and check_host enforces it rather than warning,
+# because a build that dies at 90% leaves a chroot no later run can resume.
+apply_variant() {
+    local default_disk
+    case "$VARIANT" in
+        desktop)
+            ISO_PREFIX="samurai-linux"
+            default_disk=50
+            ;;
+        security)
+            ISO_PREFIX="samurai-security"
+            default_disk=200
+            ;;
+        *) die "unknown variant '$VARIANT' (expected desktop or security)" ;;
+    esac
+    MIN_DISK_GB="${SAMURAI_MIN_DISK_GB:-$default_disk}"
+}
 MIN_RAM_GB="${SAMURAI_MIN_RAM_GB:-4}"
 
 log() { printf '==> %s\n' "$*"; }
 warn() { printf 'Warning: %s\n' "$*" >&2; }
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 
+# After the helpers, so an unknown SAMURAI_VARIANT fails with this script's
+# error message rather than "die: command not found".
+apply_variant
+
 usage() {
     cat <<'EOF'
 Build the Samurai Linux live ISO.
 
-Usage: [sudo] bash build/build.sh [option]
+Usage: [sudo] bash build/build.sh [--variant NAME] [option]
+
+Variants:
+  desktop   (default) the workstation image
+  security  the same desktop plus an installed offensive-security toolset
 
 Options:
   (none)       Clean, configure, build, and collect the ISO
@@ -25,14 +58,15 @@ Options:
   -h, --help   Show this help
 
 Environment:
-  SAMURAI_MIN_DISK_GB   Required free disk in GiB (default: 50)
+  SAMURAI_VARIANT       desktop or security (default: desktop)
+  SAMURAI_MIN_DISK_GB   Required free disk in GiB (default: 50 desktop, 200 security)
   SAMURAI_MIN_RAM_GB    Warn below this RAM in GiB (default: 4)
   SAMURAI_SIGN_KEY      GPG key id used to sign the ISO (optional)
 
 Output:
-  dist/samurai-linux-YYYY.MM.DD-amd64.iso
-  dist/samurai-linux-YYYY.MM.DD-amd64.iso.sha256
-  dist/samurai-linux-YYYY.MM.DD-amd64.iso.sig  (when SAMURAI_SIGN_KEY is set)
+  dist/samurai-linux-YYYY.MM.DD-amd64.iso      (security: samurai-security-...)
+  dist/<iso>.sha256
+  dist/<iso>.sig  (when SAMURAI_SIGN_KEY is set)
 EOF
 }
 
@@ -63,7 +97,7 @@ check_host() {
         warn "Only ${mem_gb} GiB RAM detected; ${MIN_RAM_GB} GiB or more is recommended"
     fi
 
-    log "Host check passed (${available_gb} GiB free, ${mem_gb} GiB RAM)"
+    log "Host check passed (${available_gb} GiB free, ${mem_gb} GiB RAM) variant=$VARIANT needs ${MIN_DISK_GB} GiB"
 }
 
 sync_assets() {
@@ -81,6 +115,11 @@ sync_assets() {
         find "$BUILD_DIR/config/hooks" -name '*.hook.chroot' -exec chmod 0755 {} +
     fi
     chmod 0755 "$BUILD_DIR/auto/config"
+    # The variant's archive, tool list and pin files, and /etc/samurai-variant.
+    # A separate script because the rule "staging must remove what the previous
+    # build staged before it copies what this one stages" is worth testing on a
+    # machine with no live-build on it: see `bash build/stage-variant.sh --self-test`.
+    bash "$BUILD_DIR/stage-variant.sh" --variant "$VARIANT" --build-dir "$BUILD_DIR"
     log "Synced scripts and themes into config/includes.chroot"
 }
 
@@ -116,7 +155,7 @@ collect_artifacts() {
 
     ((${#isos[@]} > 0)) || die "Build finished but no live-image-*.hybrid.iso was produced"
     source="${isos[0]}"
-    name="samurai-linux-$(date +%Y.%m.%d)-amd64.iso"
+    name="$ISO_PREFIX-$(date +%Y.%m.%d)-amd64.iso"
     install -d -m 0755 "$REPO_ROOT/dist"
     out="$REPO_ROOT/dist/$name"
     cp -- "$source" "$out"
@@ -135,7 +174,31 @@ collect_artifacts() {
 }
 
 main() {
-    case "${1:-}" in
+    # --variant is accepted anywhere, because the thing it changes - which
+    # variant is staged and what the ISO is called - has to be known before the
+    # first step that reads the config tree, and a caller who means
+    # `--check --variant security` should not have to know which one parses first.
+    local -a rest=()
+    while (($#)); do
+        case "$1" in
+            --variant)
+                (($# >= 2)) || die "--variant needs a name: desktop or security"
+                VARIANT=$2
+                shift 2
+                ;;
+            --variant=*)
+                VARIANT=${1#--variant=}
+                shift
+                ;;
+            *)
+                rest+=("$1")
+                shift
+                ;;
+        esac
+    done
+    apply_variant
+
+    case "${rest[0]:-}" in
         --check)
             check_host
             sync_assets
@@ -169,7 +232,7 @@ main() {
             collect_artifacts
             ;;
         *)
-            die "Unknown option: $1 (run: bash build/build.sh --help)"
+            die "Unknown option: ${rest[*]} (run: bash build/build.sh --help)"
             ;;
     esac
 }

@@ -1,0 +1,205 @@
+# Samurai Linux `security` variant: the toolset that ships in the image.
+#
+# This list is staged into config/package-lists/ only when
+# SAMURAI_VARIANT=security (build/build.sh), and live-build installs what it
+# names exactly as it installs the desktop list, so a name here is a promise the
+# build is held to: an unknown name fails the build, and build/verify-iso.sh
+# reconciles this file against the squashfs afterwards, so a tool cannot quietly
+# drop out of the image and stay in the documentation.
+#
+# Where the names come from is decided by etc/apt/preferences.d in this
+# variant's archives directory, not by which line they are on: everything that
+# exists in Debian trixie is installed from Debian, and only what Debian does
+# not carry comes from the pinned Kali archive. Both kinds are listed together
+# because the split is apt's decision at install time and the two archives swap
+# membership between releases - a list that claimed to be "the Kali part" would
+# be wrong on the first such move.
+#
+# What is deliberately NOT here, and why:
+#   kali-linux-everything - Kali's own maximal metapackage, but it also drags in
+#     kali-linux-labs (importable vulnerable lab targets). An image that ships
+#     practice victims is a different product from one that ships the tools.
+#   gvm / ospd-openvas - OpenVAS's postinst wants a scanner database and running
+#     services; in a live session that is a download and a daemon the image has
+#     no business starting, and a build that dies in a postinst teaches us
+#     nothing about the toolset.
+#   anything not in either archive - metasploit's `armitage` is here because
+#     Kali packages it, but tools distributed only as upstream tarballs or Go
+#     modules (nuclei-templates, chisel, kerbrute, ldapdomaindump, anew, gau,
+#     interactsh) are not fetched. The only APT sources are Debian's and Kali's;
+#     a build that downloads a raw binary from a project's web server is not
+#     reproducible and not signed by anyone we have decided to trust.
+#   beef-project, volatility3 - asked for and dropped, not forgotten: neither
+#     name exists in Debian trixie nor in Kali's own archive, so shipping them
+#     would mean building them from source or downloading a release, both of
+#     which the paragraph above rules out. The names were checked against
+#     dists/trixie/{main,contrib,non-free-firmware} and
+#     dists/kali-rolling/{main,contrib} on the date this file was written; the
+#     build re-checks them by installing them.
+
+# --- Kali's own category sets -------------------------------------------------
+# These are the membership lists Kali maintains; naming them rather than a
+# thousand individual tools means the image tracks a set that is curated and
+# tested upstream instead of one that goes stale in this repository.
+kali-tools-top10
+kali-tools-identify
+kali-tools-information-gathering
+kali-tools-web
+kali-tools-vulnerability
+kali-tools-database
+kali-tools-passwords
+kali-tools-exploitation
+kali-tools-post-exploitation
+kali-tools-sniffing-spoofing
+kali-tools-802-11
+kali-tools-bluetooth
+kali-tools-sdr
+kali-tools-rfid
+kali-tools-hardware
+kali-tools-gpu
+kali-tools-crypto-stego
+kali-tools-forensics
+kali-tools-recover
+kali-tools-reverse-engineering
+kali-tools-fuzzing
+kali-tools-social-engineering
+kali-tools-windows-resources
+kali-tools-reporting
+kali-tools-detect
+kali-tools-protect
+kali-tools-respond
+
+# --- Tools named here rather than left to a metapackage -----------------------
+# Each of these is either something this project wants guaranteed in the image
+# whatever Kali's category sets do next, or something the category sets do not
+# include. They are not a claim about which archive serves them; that is the
+# pin's business.
+nmap
+masscan
+zmap
+netdiscover
+dsniff
+dnsrecon
+dnsenum
+fierce
+theharvester
+recon-ng
+sherlock
+amass
+subfinder
+whatweb
+wafw00f
+sqlmap
+wfuzz
+ffuf
+gobuster
+dirb
+dirsearch
+arjun
+feroxbuster
+commix
+xsser
+dalfox
+katana
+httpx-toolkit
+naabu
+dnsx
+uro
+nuclei
+burpsuite
+zaproxy
+metasploit-framework
+armitage
+exploitdb
+routersploit
+set
+evil-winrm
+netexec
+python3-impacket
+python3-pypykatz
+mimikatz
+bloodhound
+pspy
+windows-privesc-check
+unix-privesc-check
+powershell-empire
+nishang
+webshells
+seclists
+wordlists
+hashcat
+john
+hydra
+medusa
+crunch
+cewl
+ophcrack
+rcracki-mt
+hashcat-utils
+hash-identifier
+pdfcrack
+rarcrack
+aircrack-ng
+wifite
+kismet
+reaver
+mdk3
+mdk4
+airgeddon
+fern-wifi-cracker
+spooftooph
+bluelog
+btscanner
+bettercap
+responder
+mitmproxy
+wireshark
+tshark
+tcpdump
+netsniff-ng
+ngrep
+tcpick
+tcptraceroute
+thc-ipv6
+yersinia
+macchanger
+netcat-openbsd
+socat
+snort
+suricata
+zeek
+radare2
+ghidra
+gef
+ropper
+python3-pwntools
+checksec
+gdb
+strace
+ltrace
+valgrind
+qemu-user-static
+binwalk
+sleuthkit
+autopsy
+foremost
+scalpel
+guymager
+testdisk
+libimage-exiftool-perl
+steghide
+hashdeep
+ssdeep
+yara
+clamav
+lynis
+rkhunter
+chkrootkit
+tiger
+aide
+openscap-scanner
+openscap-utils
+fail2ban
+trivy
+syft
+pacu

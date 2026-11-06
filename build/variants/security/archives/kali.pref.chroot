@@ -1,0 +1,27 @@
+# Pinning for the Kali archive during the build.
+#
+# Priority 50 is the number that makes "Debian first, Kali for what Debian does
+# not carry" true rather than aspirational. apt_preferences(5) treats 50 as
+# "not normally installed, but installable", which has exactly the two
+# consequences this variant needs:
+#
+#   - a package that exists in both archives resolves to Debian's. nmap, john,
+#     hashcat, wireshark, sqlmap and the rest of the overlap come from trixie,
+#     and Kali's typically-newer version is never preferred.
+#   - a Kali package can still be pulled in, either because the security
+#     package list names it or because something it names depends on it. Naming
+#     a package overrides its pin; a dependency at priority 50 is installable,
+#     which is why the pin is 50 and not 1: at 1, a Kali-only tool whose
+#     dependency closure is also Kali-only cannot be installed at all, and the
+#     build dies with unmet dependencies instead of shipping the toolset.
+#
+# Below 0 would be different again: it forbids installation entirely. 50 is the
+# same tier Debian itself uses for `sid` when mixed into a stable system.
+#
+# The consequence to be aware of: nothing here upgrades a Debian package to a
+# Kali version, so the base system's libraries stay Debian's and a Kali tool is
+# running on trixie's libc and Python - which is why a tool that fails does so
+# loudly at build time rather than quietly later.
+Package: *
+Pin: release n=kali-rolling
+Pin-Priority: 50
