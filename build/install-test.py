@@ -154,6 +154,27 @@ def _is_hex(token: str) -> bool:
     return True
 
 
+def renderer_problem(session_type: str, glx: str, egl: str) -> str | None:
+    """Say what keeps this session from compositing, or None when it can.
+
+    glxinfo reaches OpenGL through an X server. The installed image logs into
+    Plasma's Wayland session even when the test-only autologin names plasmax11,
+    so asking glxinfo there fails with "unable to open display :0" while Mesa is
+    present and working - which is how run 42129297987 reported a missing DRI
+    driver on an image whose eglinfo named kms_swrast. On Wayland the same
+    question is answered over EGL, the path KWin itself uses.
+    """
+    if session_type.lower() == "wayland":
+        if "Mesa" not in egl:
+            return "the Wayland session reports no Mesa EGL vendor, so KWin cannot composite"
+        if "EGL driver name:" not in egl:
+            return "the Wayland session created no EGL driver, so the image has no usable Mesa DRI driver"
+        return None
+    if "OpenGL renderer string" not in glx:
+        return "the X11 session has no OpenGL renderer, so the image has no Mesa DRI driver"
+    return None
+
+
 class Log:
     def __init__(self, path: Path):
         self.path = path
@@ -2368,16 +2389,26 @@ class InstallerTest:
             # A desktop with no GL/EGL provider cannot composite, and that is what
             # really broke run 17: the image shipped Qt but no Mesa driver, so KWin
             # logged "egl: failed to create dri2 screen". Gated because every theme
-            # check below depends on a working renderer.
+            # check below depends on a working renderer. The probe follows the
+            # session: glxinfo needs an X server and this image logs into Wayland.
+            session_type = self.session_env.get("XDG_SESSION_TYPE", "").lower()
+            record("session type", session_type or "unknown")
             glx = self.session_command("glxinfo -B 2>&1 | head -n 20 || true")
             record("glxinfo -B", glx)
-            record("eglinfo", self.session_command("eglinfo 2>&1 | head -n 25 || true"))
-            if "OpenGL renderer string" not in glx:
-                raise Failure(f"the session has no OpenGL renderer, so the image has no Mesa DRI driver:\n{glx}")
+            egl = self.session_command(
+                "eglinfo 2>&1 | grep -E 'EGL vendor string|EGL driver name|"
+                "OpenGL (core|ES) profile renderer' | head -n 6 || true"
+            )
+            record("eglinfo renderer", egl)
+            problem = renderer_problem(session_type, glx, egl)
+            if problem:
+                raise Failure(
+                    f"{problem} (session {session_type or 'unknown'}):\n"
+                    f"glxinfo said:\n{glx}\neglinfo said:\n{egl}"
+                )
 
             applied = self.session_command("samurai-theme set shiro 2>&1")
             record("samurai-theme set shiro", applied)
-            record("session type", self.session_env.get("XDG_SESSION_TYPE", "unknown"))
             if "Applied Samurai shiro color scheme" not in applied:
                 raise Failure(
                     "samurai-theme could not apply a color scheme to a live Plasma session:\n"
@@ -2626,6 +2657,27 @@ def self_test() -> int:
             console.close()
             log.close()
     guest.close()
+
+    # The renderer gate has to read the session it is in. Run 42129297987
+    # failed here: the installed image was on Wayland, glxinfo could not open a
+    # display, and a working Mesa stack (eglinfo: kms_swrast) was reported as a
+    # missing DRI driver.
+    wayland_egl = "EGL vendor string: Mesa Project\nEGL driver name: kms_swrast\n"
+    x11_glx = "OpenGL renderer string: llvmpipe (LLVM 19.1.7, 256 bits)\n"
+    for session_type, glx, egl, expected in (
+        ("wayland", "Error: unable to open display :0\n", wayland_egl, None),
+        ("wayland", "", "EGL vendor string: Mesa Project\n", "no EGL driver"),
+        ("wayland", "", "EGL driver name: kms_swrast\n", "no Mesa EGL vendor"),
+        ("x11", x11_glx, "", None),
+        ("x11", "Error: unable to open display :0\n", wayland_egl, "no OpenGL renderer"),
+    ):
+        problem = renderer_problem(session_type, glx, egl)
+        if (expected is None and problem is not None) or (expected and expected not in problem):
+            print(
+                f"FAIL: renderer gate for {session_type} returned {problem!r}, wanted {expected!r}",
+                file=sys.stderr,
+            )
+            failures += 1
 
     if failures == 0:
         print("install-test self-test passed")
