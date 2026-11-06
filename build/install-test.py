@@ -2230,6 +2230,22 @@ class InstallerTest:
             # Prefer X11: MangoHUD is documented to be unreliable on Wayland.
             x11 = [f for f in files if "/xsessions/" in f]
             session = Path(x11[0] if x11 else files[0]).name
+        # Calamares' displaymanager module writes [Autologin] Session=plasma to
+        # /etc/sddm.conf, and SDDM loads /etc/sddm.conf *after* every drop-in
+        # (ConfigBase::load), so that key outvoted the test's zz-... file in run
+        # 42283033517: the installed desktop came up on Wayland even though the
+        # test had asked for plasmax11. Disable every Session= key the image
+        # carries first, exactly as x11_autologin() does on the live image.
+        self.serial.command(
+            'for f in /etc/sddm.conf /etc/sddm.conf.d/*.conf; do '
+            '[ -f "$f" ] || continue; '
+            'grep -qE "^[[:space:]]*[Ss]ession[[:space:]]*=" "$f" || continue; '
+            'cp -a "$f" "$f.orig.install-test" 2>/dev/null || true; '
+            'sed -E -i \'s/^([[:space:]]*)([Ss]ession[[:space:]]*=.*)$/\\1# \\2/\' "$f"; '
+            'echo "disabled the Session= keys in $f"; done',
+            timeout=60,
+            check=False,
+        )
         # SDDM matches [Autologin] Session against the session *name*, so the
         # ".desktop" suffix has to go: passing "plasmax11.desktop" made SDDM
         # ignore the request and fall back to its Wayland default.
@@ -2243,6 +2259,13 @@ class InstallerTest:
             f"[Autologin]\nUser=samurai\nSession={session}\n",
         )
         self.log(f"enabled test-only SDDM autologin into {session!r}")
+        configured = self.serial.command(
+            "for f in /etc/sddm.conf /etc/sddm.conf.d/*.conf; do "
+            '[ -f "$f" ] || continue; echo "== $f"; cat "$f"; done 2>&1 | head -n 40',
+            timeout=60,
+            check=False,
+        )
+        self.log("SDDM configuration for the desktop check:\n" + configured)
         # The image ships SDDM but nothing enables the unit, so an installed
         # system boots to a text console and plasmashell never exists.
         self.serial.command("systemctl enable sddm >/dev/null 2>&1 || true", timeout=60, check=False)
@@ -2355,7 +2378,7 @@ class InstallerTest:
             env_text = self.serial.command(
                 f"tr '\\0' '\\n' < /proc/{pid}/environ | grep -E "
                 "'^(DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|DISPLAY|WAYLAND_DISPLAY"
-                "|XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP)=' || true",
+                "|XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP|XAUTHORITY)=' || true",
                 check=False,
             )
             for line in env_text.splitlines():
@@ -2369,6 +2392,17 @@ class InstallerTest:
             def record(label: str, output: str) -> None:
                 report.append(f"### {label}\n{output}\n")
                 self.log(f"{label}: {output[:1500]}")
+
+            record("sddm session history", self.serial.command(
+                "journalctl -b -u sddm --no-pager 2>/dev/null | "
+                "grep -E 'Session started|Starting (X11|Wayland) user session' | tail -n 6 || true",
+                check=False,
+            ))
+
+            # Any scheduled blanking would hide the desktop from the capture
+            # below, and the screenshots are the only proof that a person would
+            # see something.
+            self.vnc.wake()
 
             schemes = self.session_command("plasma-apply-colorscheme --list-schemes 2>&1 || true")
             record("color schemes known to Plasma", schemes)
@@ -2407,7 +2441,10 @@ class InstallerTest:
                     f"glxinfo said:\n{glx}\neglinfo said:\n{egl}"
                 )
 
-            applied = self.session_command("samurai-theme set shiro 2>&1")
+            # samurai-theme waits up to 120 s for plasmashell's script engine
+            # (dbus-send), then tries gdbus and the stock tool, so this call can
+            # legitimately outlast the default command timeout on a slow guest.
+            applied = self.session_command("samurai-theme set shiro 2>&1", timeout=360)
             record("samurai-theme set shiro", applied)
             if "Applied Samurai shiro color scheme" not in applied:
                 raise Failure(
@@ -2415,11 +2452,13 @@ class InstallerTest:
                     + applied
                 )
             if "Applied wallpaper shiro.jpg" not in applied:
-                # samurai-theme hides the tool's output, so ask Plasma directly;
-                # without this the log only says a wallpaper was not applied.
+                # samurai-theme hides each client's output, so ask Plasma
+                # directly; without this the log only says a wallpaper was not
+                # applied.
                 reason = self.session_command(
                     "plasma-apply-wallpaperimage /usr/share/backgrounds/samurai/shiro.jpg 2>&1; "
-                    "echo rc=$?"
+                    "echo rc=$?",
+                    timeout=180,
                 )
                 record("plasma-apply-wallpaperimage direct", reason)
                 raise Failure(

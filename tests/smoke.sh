@@ -264,6 +264,29 @@ wallpaper_count=$(find "$wallpaper_dir" -type f -name '*.jpg' | wc -l)
 assert_file "$REPO_ROOT/build/make-wallpapers.py"
 grep -q 'plasma-apply-wallpaperimage' "$REPO_ROOT/samurai/scripts/samurai-theme" \
     || fail "samurai-theme does not apply the theme wallpaper"
+
+# 5d-1. The wallpaper call must not inherit Plasma's 25 s default D-Bus reply
+# timeout: a software-rendered first login can still be loading plasmashell's
+# script engine then. samurai-theme sends the same evaluateScript call itself
+# with a longer deadline, so a fake dbus-send proves the call is made at all.
+mkdir -p "$TMP/wallpapers"
+: > "$TMP/wallpapers/kuro.jpg"
+cat > "$TMP/bin/dbus-send" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" > "$FAKE_DBUS_LOG"
+exit 0
+EOF
+chmod 0755 "$TMP/bin/dbus-send"
+dbus_log="$TMP/dbus-args.log"
+theme_out=$(HOME="$HOME_DIR" SAMURAI_THEME_DIR="$REPO_ROOT/samurai/themes" \
+    SAMURAI_WALLPAPER_DIR="$TMP/wallpapers" FAKE_DBUS_LOG="$dbus_log" \
+    PATH="$TMP/bin:$PATH" bash "$REPO_ROOT/samurai/scripts/samurai-theme" set kuro 2>&1)
+assert_contains "$theme_out" "Applied wallpaper kuro.jpg" "theme wallpaper"
+grep -q 'org.kde.PlasmaShell.evaluateScript' "$dbus_log" \
+    || fail "samurai-theme did not ask plasmashell to change the wallpaper"
+grep -q "file://$TMP/wallpapers/kuro.jpg" "$dbus_log" \
+    || fail "the wallpaper D-Bus call does not name the selected image"
+ok "the theme wallpaper call outlives Plasma's default D-Bus timeout"
 grep -q 'install -d -m 0755 /boot/grub' \
     "$REPO_ROOT/build/config/hooks/normal/0110-branding.hook.chroot" \
     || fail "the chroot branding hook does not create /boot/grub for the installer"

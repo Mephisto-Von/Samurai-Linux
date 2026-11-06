@@ -134,6 +134,8 @@ unsquashfs -f -no-progress -d "$ROOT" "$SQUASHFS" \
     usr/local/bin/samurai-gaming \
     usr/local/bin/samurai-profile \
     usr/local/bin/samurai-recovery \
+    usr/bin/dbus-send \
+    usr/bin/gdbus \
     etc/nftables.conf \
     etc/sudoers.d/90samurai \
     etc/apt/preferences.d/99samurai \
@@ -176,6 +178,8 @@ assert_file usr/local/bin/samurai-theme
 assert_file usr/local/bin/samurai-gaming
 assert_file usr/local/bin/samurai-profile
 assert_file usr/local/bin/samurai-recovery
+assert_file usr/bin/dbus-send
+assert_file usr/bin/gdbus
 assert_file etc/nftables.conf
 assert_file etc/sudoers.d/90samurai
 assert_file etc/apt/preferences.d/99samurai

@@ -99,6 +99,14 @@ libegl-mesa0
 mesa-utils
 mesa-vulkan-drivers
 
+# D-Bus clients used by samurai-theme to change the Plasma wallpaper. Plasma's
+# own plasma-apply-wallpaperimage hard-codes a 25 s reply timeout, which a
+# software-rendered shell can exceed while it is still loading; the theme tool
+# sends the same call itself with a longer deadline and falls back to the stock
+# tool, so both this client and gdbus (GLib's) ship with the image.
+dbus-bin
+libglib2.0-bin
+
 # Gaming runtime (Steam is installed after first boot with samurai-gaming)
 gamemode
 mangohud

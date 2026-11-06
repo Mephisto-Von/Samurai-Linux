@@ -112,20 +112,55 @@ install_theme() {
     apply_wallpaper "$name"
 }
 
+# Ask plasmashell to switch every desktop to an image.
+#
+# Plasma's own plasma-apply-wallpaperimage sends exactly this call but lets Qt
+# use its default 25 s D-Bus reply timeout. A freshly booted, software-rendered
+# Plasma is still loading its script engine then, so the call times out and the
+# tool reports "the wallpaper was not changed" on a session whose wallpaper can
+# be changed (install-test run 42283033517). Send the same script with a longer
+# deadline, and keep the stock tool as the fallback for other Plasma versions.
+apply_wallpaper_image() {
+    local wallpaper="$1" uri script
+    case "$wallpaper" in
+        *"'"*)
+            warn "refusing a wallpaper path containing a single quote: $wallpaper"
+            return 1
+            ;;
+    esac
+    uri="file://$wallpaper"
+    script="for (var key in desktops()) { var d = desktops()[key]; d.wallpaperPlugin = 'org.kde.image'; d.currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General']; d.writeConfig('Image', '$uri'); }"
+    if command -v dbus-send >/dev/null 2>&1; then
+        if dbus-send --session --print-reply --reply-timeout=120000 \
+            --dest=org.kde.plasmashell /PlasmaShell \
+            org.kde.PlasmaShell.evaluateScript "string:$script" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    if command -v gdbus >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+        if timeout 120 gdbus call --session --dest org.kde.plasmashell \
+            --object-path /PlasmaShell \
+            --method org.kde.PlasmaShell.evaluateScript "$script" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    if command -v plasma-apply-wallpaperimage >/dev/null 2>&1; then
+        plasma-apply-wallpaperimage "$wallpaper" >/dev/null 2>&1
+        return
+    fi
+    return 1
+}
+
 # Each theme ships a wallpaper of the same name (kuro.jpg / shiro.jpg) in
 # /usr/share/backgrounds/samurai. A missing wallpaper is not an error.
 apply_wallpaper() {
     local name="$1" wallpaper
     wallpaper="$WALLPAPER_DIR/$name.jpg"
     [[ -f "$wallpaper" ]] || return 0
-    if command -v plasma-apply-wallpaperimage >/dev/null 2>&1; then
-        if plasma-apply-wallpaperimage "$wallpaper" >/dev/null 2>&1; then
-            log "Applied wallpaper $(basename "$wallpaper")"
-        else
-            warn "plasma-apply-wallpaperimage failed; the wallpaper was not changed"
-        fi
+    if apply_wallpaper_image "$wallpaper"; then
+        log "Applied wallpaper $(basename "$wallpaper")"
     else
-        warn "plasma-apply-wallpaperimage not found; the wallpaper will be applied after the next Plasma login"
+        warn "could not change the wallpaper (no Plasma session, or its script interface did not answer)"
     fi
 }
 
@@ -153,14 +188,10 @@ set_wallpaper() {
     else
         die "Wallpaper not found: $name (try 'samurai-theme wallpaper' to list)"
     fi
-    if command -v plasma-apply-wallpaperimage >/dev/null 2>&1; then
-        if plasma-apply-wallpaperimage "$wallpaper" >/dev/null 2>&1; then
-            log "Applied wallpaper $(basename "$wallpaper")"
-        else
-            warn "plasma-apply-wallpaperimage failed; the wallpaper was not changed"
-        fi
+    if apply_wallpaper_image "$wallpaper"; then
+        log "Applied wallpaper $(basename "$wallpaper")"
     else
-        warn "plasma-apply-wallpaperimage not found; the wallpaper will be applied after the next Plasma login"
+        warn "could not change the wallpaper (no Plasma session, or its script interface did not answer)"
     fi
 }
 
@@ -169,14 +200,10 @@ random_wallpaper() {
     local wp
     wp=$(find "$WALLPAPER_DIR" -type f \( -name '*.jpg' -o -name '*.png' \) | shuf -n 1)
     [[ -n "$wp" ]] || die "No wallpapers found"
-    if command -v plasma-apply-wallpaperimage >/dev/null 2>&1; then
-        if plasma-apply-wallpaperimage "$wp" >/dev/null 2>&1; then
-            log "Applied random wallpaper $(basename "$wp")"
-        else
-            warn "plasma-apply-wallpaperimage failed; the wallpaper was not changed"
-        fi
+    if apply_wallpaper_image "$wp"; then
+        log "Applied random wallpaper $(basename "$wp")"
     else
-        warn "plasma-apply-wallpaperimage not found; the wallpaper will be applied after the next Plasma login"
+        warn "could not change the wallpaper (no Plasma session, or its script interface did not answer)"
     fi
 }
 
