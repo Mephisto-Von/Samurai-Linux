@@ -440,8 +440,12 @@ JSON
         fail=1
     else
         local parts biggest rebuilt recorded
-        parts=$(ls "$tmp/big"/*.iso.part[0-9][0-9] 2>/dev/null | wc -l | tr -d '[:space:]')
-        biggest=$(wc -c < "$(ls "$tmp/big"/*.iso.part[0-9][0-9] | tail -n 1)" | tr -d '[:space:]')
+        local -a part_files
+        shopt -s nullglob
+        part_files=("$tmp/big"/*.iso.part[0-9][0-9])
+        shopt -u nullglob
+        parts=${#part_files[@]}
+        biggest=$(wc -c < "${part_files[-1]}" | tr -d '[:space:]')
         rebuilt=$(cat "$tmp/big"/*.iso.part[0-9][0-9] | sha256sum | awk '{ print $1 }')
         recorded=$(awk '{ print $1 }' "$tmp/big"/*.iso.sha256)
         if [[ "$parts" == "4" && "$biggest" =~ ^[0-9]+$ && "$biggest" -le 1024 \
