@@ -2306,6 +2306,31 @@ class InstallerTest:
             check=False,
         )
 
+    def plasma_script(self, script: str, timeout: float = 60) -> str:
+        """Evaluate a Plasma desktop script and return the reply text.
+
+        `samurai-theme` changes the wallpaper this way. dbus-send reports
+        success when plasmashell accepted the call, not when the script did
+        anything, so a caller that needs proof has to read a value back.
+        """
+        assert self.serial
+        return self.session_command(
+            "dbus-send --session --print-reply --reply-timeout=30000 "
+            "--dest=org.kde.plasmashell /PlasmaShell "
+            "org.kde.PlasmaShell.evaluateScript " + shlex.quote("string:" + script),
+            timeout=timeout,
+        )
+
+    @staticmethod
+    def _script_reply_value(output: str) -> str:
+        """Return the string a Plasma evaluateScript reply carries.
+
+        dbus-send prints the method return as `string "..."`; the scripts used
+        here return one string, so the last such line is the answer.
+        """
+        matches = re.findall(r'string "(.*)"', output)
+        return matches[-1] if matches else ""
+
     @staticmethod
     def _distinct_colors(path: Path, size: tuple[int, int] = (80, 50)) -> int:
         from PIL import Image
@@ -2313,6 +2338,16 @@ class InstallerTest:
         with Image.open(path) as image:
             sample = image.convert("RGB").resize(size)
             return len({tuple(px) for px in sample.getdata()})
+
+    @staticmethod
+    def _patch_mean(path: Path, box: tuple[int, int, int, int]) -> tuple[int, int, int]:
+        """Mean RGB of a rectangle in a capture, for checking what is painted."""
+        from PIL import Image
+
+        with Image.open(path) as image:
+            patch = image.convert("RGB").crop(box)
+            pixels = list(patch.getdata())
+        return tuple(sum(channel) // len(pixels) for channel in zip(*pixels))
 
     # Metrics the published performance claims are allowed to rest on. A core
     # metric that came back "unavailable" means the harness measured nothing, so
@@ -2424,6 +2459,43 @@ class InstallerTest:
                 check=False,
             ))
 
+            # Plasma's desktop containment is created asynchronously after
+            # plasmashell starts. A wallpaper script that runs before it exists
+            # loops over an empty desktops() and changes nothing, while
+            # dbus-send still reports success - which is how run 42386883894
+            # ended with a black desktop and a log line saying the shiro
+            # wallpaper was applied.
+            self.dismiss_welcome()
+            containment_reply = ""
+            containments = ""
+            for _ in range(15):
+                containment_reply = self.plasma_script("desktops().length")
+                containments = self._script_reply_value(containment_reply)
+                if containments.isdigit() and int(containments) >= 1:
+                    break
+                time.sleep(2)
+            record("Plasma desktop containments", containment_reply)
+            if not (containments.isdigit() and int(containments) >= 1):
+                raise Failure(
+                    "Plasma created no desktop containment, so no wallpaper can be "
+                    f"applied:\n{containment_reply}"
+                )
+
+            # The image autostarts `samurai-theme default` at login. If it is
+            # still running when the test applies shiro, it can finish last and
+            # put the saved theme's wallpaper back.
+            for _ in range(30):
+                running = self.serial.command(
+                    "pgrep -u samurai -f '/usr/local/bin/samurai-theme' >/dev/null 2>&1 "
+                    "&& echo running || echo done",
+                    timeout=30,
+                    check=False,
+                )
+                if "running" not in running:
+                    break
+                time.sleep(1)
+            record("samurai-theme autostart", running)
+
             # Any scheduled blanking would hide the desktop from the capture
             # below, and the screenshots are the only proof that a person would
             # see something.
@@ -2491,6 +2563,32 @@ class InstallerTest:
                     + f"\nplasma-apply-wallpaperimage said:\n{reason}"
                 )
 
+            # The theme's own output only says the D-Bus call returned. Read the
+            # image Plasma actually recorded; a late autostart or a script that
+            # ran before the containment existed can leave the old image in
+            # place while the command still reports success.
+            wallpaper = ""
+            for attempt in range(6):
+                wallpaper = self._script_reply_value(self.plasma_script(
+                    "var d = desktops()[0]; "
+                    "d.currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General']; "
+                    "d.readConfig('Image')"))
+                if wallpaper.endswith("/shiro.jpg"):
+                    break
+                time.sleep(2)
+                if attempt == 2:
+                    reapplied = self.session_command("samurai-theme set shiro 2>&1", timeout=360)
+                    record("samurai-theme set shiro (retry)", reapplied)
+            record("Plasma wallpaper image", wallpaper)
+            if not wallpaper.endswith("/shiro.jpg"):
+                plugin = self._script_reply_value(self.plasma_script(
+                    "desktops()[0].wallpaperPlugin"))
+                record("Plasma wallpaper plugin", plugin)
+                raise Failure(
+                    "samurai-theme reported success but Plasma did not record the "
+                    f"shiro wallpaper (Image={wallpaper!r}, plugin={plugin!r})"
+                )
+
             config = self.session_command(
                 "for g in KDE General; do printf '%s=' \"$g\"; kreadconfig6 --file kdeglobals "
                 '--group "$g" --key ColorScheme 2>/dev/null; echo; done'
@@ -2525,14 +2623,48 @@ class InstallerTest:
                 + "\nfull report, each value with the command that produced it: performance.txt",
             )
 
+            # The Welcome Center can reopen between login and this capture, and
+            # it covered the desktop in run 42386883894's failure screenshot.
+            self.dismiss_welcome()
             self.vnc.wake()
             shot = self.vnc.stable_capture("09-desktop.png")
             colors = self._distinct_colors(shot)
-            record("desktop screenshot", f"{shot.name}: {colors} distinct colors sampled")
+            corner = self._patch_mean(shot, (0, 0, 32, 32))
+            # The wallpaper is painted asynchronously, and a capture taken
+            # before the first paint would read as a black desktop. Retry a
+            # few times before treating that as the answer.
+            for attempt in range(4):
+                if colors >= 12 and sum(corner) >= 180:
+                    break
+                self.log(
+                    f"desktop capture attempt {attempt + 1}: {colors} distinct "
+                    f"colors, top-left {corner}"
+                )
+                time.sleep(3)
+                self.dismiss_welcome()
+                self.vnc.wake()
+                shot = self.vnc.stable_capture("09-desktop.png")
+                colors = self._distinct_colors(shot)
+                corner = self._patch_mean(shot, (0, 0, 32, 32))
+            record(
+                "desktop screenshot",
+                f"{shot.name}: {colors} distinct colors sampled; "
+                f"top-left mean {corner}",
+            )
             if colors < 12:
                 raise Failure(
                     f"the desktop capture is blank ({colors} distinct colors); "
                     "the compositor is not rendering"
+                )
+            # shiro.jpg's corners are light grey (~156 per channel) and the
+            # shiro scheme background is #F5F0E6, so a near-black corner means
+            # the wallpaper Plasma recorded never painted - the black kuro
+            # wallpaper or an empty desktop, not the theme this test set.
+            if sum(corner) < 180:
+                raise Failure(
+                    f"the desktop is black at the top-left corner ({corner}), so "
+                    "the shiro wallpaper Plasma recorded did not render; the "
+                    "compositor or the image wallpaper plugin is not painting it"
                 )
         finally:
             (self.work / f"installed-desktop-{pid or 'early'}.txt").write_text(
@@ -2750,6 +2882,45 @@ def self_test() -> int:
                 file=sys.stderr,
             )
             failures += 1
+
+    # The wallpaper check reads a value back from Plasma and samples the
+    # rendered capture. Pin both halves: dbus-send prints the script's return
+    # value as `string "..."`, and a black corner has to be told apart from
+    # the light shiro wallpaper.
+    for output, expected in (
+        (
+            "method return time=1 sender=:1.2 -> destination=:1.3 serial=4 "
+            'reply_serial=2\n   string "1"\n',
+            "1",
+        ),
+        (
+            "method return time=1\n"
+            '   string "file:///usr/share/backgrounds/samurai/shiro.jpg"\n',
+            "file:///usr/share/backgrounds/samurai/shiro.jpg",
+        ),
+        ("", ""),
+    ):
+        got = InstallerTest._script_reply_value(output)
+        if got != expected:
+            print(
+                f"FAIL: script reply {output!r} parsed as {got!r}, wanted {expected!r}",
+                file=sys.stderr,
+            )
+            failures += 1
+
+    with tempfile.TemporaryDirectory() as tmp:
+        from PIL import Image
+
+        for name, color in (("black", (0, 0, 0)), ("shiro", (156, 156, 154))):
+            patch = Path(tmp) / f"{name}.png"
+            Image.new("RGB", (8, 8), color).save(patch)
+            got = InstallerTest._patch_mean(patch, (0, 0, 4, 4))
+            if got != color:
+                print(
+                    f"FAIL: a {name} patch read as {got!r}, wanted {color!r}",
+                    file=sys.stderr,
+                )
+                failures += 1
 
     if failures == 0:
         print("install-test self-test passed")
