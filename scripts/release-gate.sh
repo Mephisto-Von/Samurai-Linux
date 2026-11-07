@@ -90,6 +90,59 @@ select_iso_run_from_log() {
 # self-test can exercise both directions without building a 2 GiB file.
 max_asset_bytes() { printf '%s\n' "${SAMURAI_MAX_ASSET_BYTES:-2147483648}"; }
 
+# How large each part may be when an ISO has to be published in pieces.
+# 1900 MiB leaves headroom under GitHub's 2 GiB (2147483648 byte) per-asset
+# ceiling, and matches the split that was uploaded by hand for v0.0.1.
+split_part_bytes() { printf '%s\n' "${SAMURAI_SPLIT_PART_BYTES:-1992294400}"; }
+
+# Split an ISO that the release host will not accept as one asset, and prove the
+# parts rebuild it. The image has been 2.9 GB since it gained a full KDE
+# desktop, so "slim it below 2 GiB" or "publish elsewhere" are the only other
+# answers; the project chose parts, and the gate now does that instead of
+# stopping a release the workflow could have published.
+split_iso_for_release() {
+    local iso=$1 limit=$2 part_size expected actual dir base parts count
+    part_size=$(split_part_bytes)
+    [[ "$part_size" =~ ^[1-9][0-9]*$ ]] || die "SAMURAI_SPLIT_PART_BYTES is not a positive number: '$part_size'"
+    if ((part_size > limit)); then
+        part_size=$limit
+    fi
+    ((part_size > 0)) || die "the release host's per-asset limit is not positive: $limit"
+    expected=$(awk 'NR == 1 { print $1 }' "$iso.sha256")
+    [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] \
+        || die "$(basename "$iso").sha256 does not start with a SHA-256 checksum, so the parts cannot be verified"
+    dir=$(dirname "$iso")
+    base=$(basename "$iso")
+    # Start from a clean slate: a previous run's parts must never be uploaded
+    # beside a new ISO.
+    rm -f "$iso".part[0-9][0-9] "$iso.parts.sha256" "$dir/REASSEMBLE.txt"
+    split -b "$part_size" -d -a 2 --numeric-suffixes=1 "$iso" "$iso.part"
+    parts=("$iso".part[0-9][0-9])
+    count=${#parts[@]}
+    ((count > 1)) || die "splitting $base produced $count part(s); it should not need splitting"
+    actual=$(cat "${parts[@]}" | sha256sum | awk '{ print $1 }')
+    [[ "$actual" == "$expected" ]] || die "the parts of $base do not reassemble to its recorded SHA-256:
+  recorded $expected
+  rebuilt  $actual"
+    (cd "$dir" && sha256sum "$base".part[0-9][0-9] > "$base.parts.sha256")
+    cat > "$dir/REASSEMBLE.txt" <<EOF
+Samurai Linux $base is published in $count parts.
+
+The image is $(wc -c < "$iso" | tr -d '[:space:]') bytes, and the release host
+refuses a single asset above $limit bytes, so each part is at most $part_size
+bytes. Download every part into one directory, then reassemble and verify:
+
+  cat $base.part?? > $base
+  sha256sum -c $base.parts.sha256
+  sha256sum -c $base.sha256
+  gpg --import samurai-release-key.asc
+  gpg --verify $base.sig $base
+
+Only the reassembled ISO proves anything: a part on its own is not bootable.
+EOF
+    log "ISO is larger than the release host's per-asset limit: split into $count parts of at most $part_size bytes, and the parts rebuild it"
+}
+
 # Every artifact a release must carry, paired with the files that authenticate
 # it, and sized against what the release host accepts. Split out of the network
 # work so tests/smoke.sh can exercise every direction: a complete set passes, a
@@ -115,9 +168,11 @@ installed-package list cannot be triaged for security holes"
     bytes=$(wc -c < "$iso" | tr -d '[:space:]')
     [[ "$bytes" =~ ^[0-9]+$ ]] || die "cannot read the size of $iso"
     if ((bytes > limit)); then
-        die "$iso is $bytes bytes and the release host allows $limit per asset. Either
-slim the image below that or publish it somewhere else; a tag pushed before
-that choice is made names a release that cannot exist"
+        split_iso_for_release "$iso" "$limit"
+    else
+        # A stale part from an earlier attempt must not make the workflow
+        # upload pieces of a different image.
+        rm -f "$iso".part[0-9][0-9] "$iso.parts.sha256" "$dist/REASSEMBLE.txt"
     fi
     printf 'ISO %s is %s bytes (the release host allows %s per asset)\n' \
         "$(basename "$iso")" "$bytes" "$limit" >&2
@@ -134,23 +189,40 @@ that choice is made names a release that cannot exist"
 # shellcheck disable=SC2016
 write_release_notes() {
     local out=$1 iso=$2 iso_run=$3 install_run=$4 sha=$5 tag=$6
-    local checksum
+    local checksum base parts
     checksum=$(awk '{ print $1 }' "$iso.sha256")
+    base=$(basename "$iso")
+    parts=()
+    if [[ -e "$iso.part01" ]]; then
+        parts=("$iso".part[0-9][0-9])
+    fi
     {
         printf '## Samurai Linux %s\n\n' "${tag#v}"
-        printf 'Image: `%s`\n\n' "$(basename "$iso")"
+        printf 'Image: `%s`\n\n' "$base"
         printf -- '- SHA-256: `%s`\n' "$checksum"
         printf -- '- Size: %s bytes\n' "$(wc -c < "$iso" | tr -d '[:space:]')"
+        if ((${#parts[@]})); then
+            printf -- '- Published in %s parts of at most %s bytes because the release host refuses a single asset above %s bytes. **Reassemble before use** - the commands are below and in `REASSEMBLE.txt`.\n' \
+                "${#parts[@]}" "$(split_part_bytes)" "$(max_asset_bytes)"
+        fi
         printf -- '- Signed with the release key published in `samurai/keys/`.\n'
         printf -- '- Built by run <https://github.com/%s/actions/runs/%s>\n' "$GITHUB_REPOSITORY" "$iso_run"
         printf -- '- Installed and booted by run <https://github.com/%s/actions/runs/%s>\n' \
             "$GITHUB_REPOSITORY" "$install_run"
         printf -- '- Commit: `%s`\n\n' "$sha"
-        printf 'Verify before installing:\n\n'
+        if ((${#parts[@]})); then
+            printf 'Download every part, then reassemble and verify:\n\n'
+        else
+            printf 'Verify before installing:\n\n'
+        fi
         printf '```bash\n'
+        if ((${#parts[@]})); then
+            printf 'cat %s.part?? > %s\n' "$base" "$base"
+            printf 'sha256sum -c %s.parts.sha256\n' "$base"
+        fi
         printf 'gpg --import samurai-release-key.asc\n'
-        printf 'gpg --verify %s.sig %s\n' "$(basename "$iso")" "$(basename "$iso")"
-        printf 'sha256sum -c %s.sha256\n' "$(basename "$iso")"
+        printf 'gpg --verify %s.sig %s\n' "$base" "$base"
+        printf 'sha256sum -c %s.sha256\n' "$base"
         printf '```\n\n'
         printf 'What this release does not claim: no Samurai APT repository exists, Secure Boot\n'
         printf 'is not supported, and the first-boot setup wizard is not implemented. See\n'
@@ -353,25 +425,50 @@ JSON
         log "ok - an unsigned checksum stops the release"
     fi
 
-    # The release host's per-asset ceiling, exercised in both directions rather
-    # than assumed: the artifact this gate was written around is 2.74 GiB and
-    # GitHub stops at 2 GiB, so the size check is what turns a late publish
-    # failure into an early one. A lowered limit stands in for a big ISO.
+    # The release host's per-asset ceiling. The image has been 2.9 GB for as long
+    # as it has shipped a desktop, so the gate splits an over-sized ISO into
+    # parts each under the ceiling and proves they rebuild it, rather than
+    # stopping a release the workflow could have published. A lowered limit
+    # stands in for GitHub's 2 GiB.
     mkdir -p "$tmp/big"
     cp -a "$tmp/good/." "$tmp/big/"
-    awk 'BEGIN { for (i = 0; i < 4096; i++) printf "x" }' \
-        > "$tmp/big/samurai-linux-2026.11.05-amd64.iso"
-    if (SAMURAI_MAX_ASSET_BYTES=1024 check_asset_pairing "$tmp/big") >/dev/null 2>&1; then
-        log "FAIL: an ISO larger than the release host accepts was still published"
+    head -c 4096 /dev/zero > "$tmp/big/samurai-linux-2026.11.05-amd64.iso"
+    (cd "$tmp/big" && sha256sum samurai-linux-2026.11.05-amd64.iso \
+        > samurai-linux-2026.11.05-amd64.iso.sha256)
+    if ! (SAMURAI_MAX_ASSET_BYTES=1024 check_asset_pairing "$tmp/big") >/dev/null 2>&1; then
+        log "FAIL: an ISO above the release host's limit was not split into publishable parts"
         fail=1
     else
-        log "ok - an ISO larger than the release host accepts stops the release"
+        local parts biggest rebuilt recorded
+        parts=$(ls "$tmp/big"/*.iso.part[0-9][0-9] 2>/dev/null | wc -l | tr -d '[:space:]')
+        biggest=$(wc -c < "$(ls "$tmp/big"/*.iso.part[0-9][0-9] | tail -n 1)" | tr -d '[:space:]')
+        rebuilt=$(cat "$tmp/big"/*.iso.part[0-9][0-9] | sha256sum | awk '{ print $1 }')
+        recorded=$(awk '{ print $1 }' "$tmp/big"/*.iso.sha256)
+        if [[ "$parts" == "4" && "$biggest" =~ ^[0-9]+$ && "$biggest" -le 1024 \
+              && -e "$tmp/big/REASSEMBLE.txt" && "$rebuilt" == "$recorded" ]]; then
+            log "ok - an ISO above the ceiling is split into parts that rebuild it"
+        else
+            log "FAIL: the split parts do not rebuild the ISO (parts=$parts biggest=$biggest)"
+            fail=1
+        fi
+    fi
+    # Splitting must not paper over a broken bundle: if the parts cannot be
+    # proved to rebuild the recorded ISO, the release stops.
+    mkdir -p "$tmp/badsum"
+    cp -a "$tmp/big/." "$tmp/badsum/"
+    printf '%064d  %s\n' 0 samurai-linux-2026.11.05-amd64.iso \
+        > "$tmp/badsum/samurai-linux-2026.11.05-amd64.iso.sha256"
+    if (SAMURAI_MAX_ASSET_BYTES=1024 check_asset_pairing "$tmp/badsum") >/dev/null 2>&1; then
+        log "FAIL: parts were produced for an ISO whose checksum they do not match"
+        fail=1
+    else
+        log "ok - a mismatched checksum stops a split release"
     fi
     if [[ "$(SAMURAI_MAX_ASSET_BYTES=999999 check_asset_pairing "$tmp/big" 2>/dev/null)" \
-        == *".iso" ]]; then
-        log "ok - the same ISO is publishable when the ceiling allows it"
+        == *".iso" ]] && [[ ! -e "$tmp/big/samurai-linux-2026.11.05-amd64.iso.part01" ]]; then
+        log "ok - the same ISO is published whole when the ceiling allows it"
     else
-        log "FAIL: an ISO within the ceiling was rejected"
+        log "FAIL: an ISO within the ceiling was rejected or left stale parts behind"
         fail=1
     fi
 

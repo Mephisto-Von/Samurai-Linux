@@ -103,7 +103,16 @@ jobs:
             exit 1
           fi
           shopt -s nullglob
-          assets=(dist/*.iso dist/*.sha256 dist/*.sig dist/*.packages.tsv dist/samurai-release-key.asc)
+          assets=(dist/*.sha256 dist/*.sig dist/*.packages.tsv
+                  dist/samurai-release-key.asc dist/samurai-release-key.fpr
+                  dist/REASSEMBLE.txt)
+          # The gate splits an image the host will not accept as one asset; the
+          # ISO itself must not be uploaded then, because the parts are what fit.
+          if compgen -G 'dist/*.iso.part[0-9][0-9]' >/dev/null; then
+            assets+=(dist/*.iso.part[0-9][0-9])
+          else
+            assets+=(dist/*.iso)
+          fi
           [[ -n "${assets[*]}" ]] || { echo "the gate left nothing in dist to publish" >&2; exit 1; }
           gh release create "$TAG" --target "$COMMIT_SHA" --title "Samurai Linux $TAG" \
             --notes-file dist/release-notes.md "${assets[@]}"

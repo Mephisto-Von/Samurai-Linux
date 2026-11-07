@@ -653,8 +653,9 @@ ok "the live kernel/modules check runs on both layouts and reports what it saw"
 
 # 26. The release gate is the only thing between a commit and a tag that users
 # quote, so it is run here rather than trusted: its self-test decides whether a
-# green install test at another commit, an unsigned checksum or an ISO larger
-# than the release host accepts stops a publication. And the workflow that calls
+# green install test at another commit, an unsigned checksum or a set of parts
+# that do not rebuild the ISO stops a publication. An over-sized ISO is split
+# into publishable parts instead of being refused. And the workflow that calls
 # it must not be able to fire on a push, which is how a release would appear
 # without anyone choosing to make one.
 bash "$REPO_ROOT/scripts/release-gate.sh" --self-test >/dev/null \
