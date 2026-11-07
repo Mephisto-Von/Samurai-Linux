@@ -170,9 +170,15 @@ def renderer_problem(session_type: str, glx: str, egl: str) -> str | None:
         if "EGL driver name:" not in egl:
             return "the Wayland session created no EGL driver, so the image has no usable Mesa DRI driver"
         return None
-    if "OpenGL renderer string" not in glx:
-        return "the X11 session has no OpenGL renderer, so the image has no Mesa DRI driver"
-    return None
+    # `glxinfo -B` prints Mesa's extended block - "Extended renderer info
+    # (GLX_MESA_query_renderer)" with a "Device:" line - and not the classic
+    # "OpenGL renderer string" line that the full listing prints. Run
+    # 42381460039 failed here on an image whose brief output named
+    # "Device: llvmpipe (LLVM 19.1.7, 256 bits)": the probe looked only for
+    # the full-listing label and called a working Mesa stack missing.
+    if "OpenGL renderer string" in glx or "Device:" in glx:
+        return None
+    return "the X11 session has no OpenGL renderer, so the image has no Mesa DRI driver"
 
 
 class Log:
@@ -2714,11 +2720,19 @@ def self_test() -> int:
     # missing DRI driver.
     wayland_egl = "EGL vendor string: Mesa Project\nEGL driver name: kms_swrast\n"
     x11_glx = "OpenGL renderer string: llvmpipe (LLVM 19.1.7, 256 bits)\n"
+    # What `glxinfo -B` actually prints on this image (run 42381460039): the
+    # brief form has no "OpenGL renderer string" line at all.
+    x11_glx_brief = (
+        "Extended renderer info (GLX_MESA_query_renderer):\n"
+        "    Vendor: Mesa (0xffffffff)\n"
+        "    Device: llvmpipe (LLVM 19.1.7, 256 bits) (0xffffffff)\n"
+    )
     for session_type, glx, egl, expected in (
         ("wayland", "Error: unable to open display :0\n", wayland_egl, None),
         ("wayland", "", "EGL vendor string: Mesa Project\n", "no EGL driver"),
         ("wayland", "", "EGL driver name: kms_swrast\n", "no Mesa EGL vendor"),
         ("x11", x11_glx, "", None),
+        ("x11", x11_glx_brief, "", None),
         ("x11", "Error: unable to open display :0\n", wayland_egl, "no OpenGL renderer"),
     ):
         problem = renderer_problem(session_type, glx, egl)
