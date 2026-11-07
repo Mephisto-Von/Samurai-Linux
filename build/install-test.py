@@ -2909,18 +2909,23 @@ def self_test() -> int:
             failures += 1
 
     with tempfile.TemporaryDirectory() as tmp:
-        from PIL import Image
-
-        for name, color in (("black", (0, 0, 0)), ("shiro", (156, 156, 154))):
-            patch = Path(tmp) / f"{name}.png"
-            Image.new("RGB", (8, 8), color).save(patch)
-            got = InstallerTest._patch_mean(patch, (0, 0, 4, 4))
-            if got != color:
-                print(
-                    f"FAIL: a {name} patch read as {got!r}, wanted {color!r}",
-                    file=sys.stderr,
-                )
-                failures += 1
+        try:
+            from PIL import Image
+        except ImportError:
+            # The smoke job installs pyflakes but not Pillow; the install-test
+            # job does, and that is where this sampler is used for real.
+            Image = None  # type: ignore[assignment]
+        if Image is not None:
+            for name, color in (("black", (0, 0, 0)), ("shiro", (156, 156, 154))):
+                patch = Path(tmp) / f"{name}.png"
+                Image.new("RGB", (8, 8), color).save(patch)
+                got = InstallerTest._patch_mean(patch, (0, 0, 4, 4))
+                if got != color:
+                    print(
+                        f"FAIL: a {name} patch read as {got!r}, wanted {color!r}",
+                        file=sys.stderr,
+                    )
+                    failures += 1
 
     if failures == 0:
         print("install-test self-test passed")
