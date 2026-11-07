@@ -865,16 +865,18 @@ class InstallerTest:
             raise Failure(f"{path} is not a screenshot")
         return struct.unpack(">II", head[16:24])
 
-    def click_word(self, word: str) -> bool:
-        """Click a matching word in the bottom button row.
+    def click_word(self, word: str, min_top_ratio: float = 0.65) -> bool:
+        """Click a matching word in the lower part of the screen.
 
-        Only the last 12% of the screen is considered: the page body also
-        contains words like "Next" and "Install", and clicking one of those
-        left the installer sitting on the same page.
+        The button row is the lowest text on a Calamares page, so the lowest
+        match is the button. A band of the last 12% was too tight: on the
+        1280x800 framebuffer this test uses, the word "Next" starts at y=699
+        and the band began at y=704, so the search failed and the fallback
+        switched Calamares' UI language instead (run 42296526484).
         """
         image = self.vnc.stable_capture("lookup.png")
         _, height = self.png_size(image)
-        band = height * 0.88
+        band = height * min_top_ratio
         matches = [
             item
             for item in self.ocr.words(image)
@@ -890,14 +892,19 @@ class InstallerTest:
 
     def click_primary_button(self) -> None:
         """Click Calamares' bottom-right primary button by geometry.
-       
-        Used only when the keyboard accelerator has no effect; OCR often
-        cannot read the Qt button labels at all.
+
+        Used only when the word search has no effect. Calamares opens a
+        1024x648 window centred on the screen, and the primary button sits
+        143 px left of and 14 px above its bottom-right corner. The old
+        fixed ``height - 80`` landed one pixel below the button on the
+        1280x800 framebuffer (y=720 against a button ending at 719), so the
+        click was swallowed. The window geometry keeps this correct on the
+        1024x768 screens the OCR class also mentions.
         """
         image = self.vnc.capture("primary-button.png")
         width, height = self.png_size(image)
-        x = int(width * 0.7875)
-        y = height - 80
+        x = (width + 1024) // 2 - 143
+        y = (height + 648) // 2 - 14
         self.log(f"clicking the primary button at {x},{y} (screen {width}x{height})")
         self.vnc.click(x, y)
 
@@ -951,7 +958,11 @@ class InstallerTest:
             clicks += 1
             self.log(f"{label}: still on the same page after 25 s, clicking Next again ({clicks})")
             if not self.click_word("next"):
-                self.vnc.key("alt-n")
+                # Alt+N is not a safe fallback: on the welcome page the
+                # language combo owns focus, and Alt+N became type-ahead "n"
+                # and selected "norsk bokmål" in run 42296526484. The button's
+                # geometry depends on neither OCR nor focus.
+                self.click_primary_button()
             clicked = time.time()
         self.vnc.capture(f"{screenshot}-gave-up.png")
         raise Failure(f"never reached {label} after {clicks + 1} click(s); last OCR: {normalized[-1500:]}")
