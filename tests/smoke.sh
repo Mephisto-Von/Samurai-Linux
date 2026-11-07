@@ -774,4 +774,17 @@ grep -q 'variants/security/package-lists/samurai-security.list.chroot' "$verify"
     || fail "build/verify-iso.sh no longer requires every declared security tool to be installed"
 ok "the ISO verifier follows the variant the image declares"
 
+# The install test reads the performance metrics back, and its gate is only as
+# good as the report the script publishes. Run 42386883894 reached the desktop
+# phase and failed because performance.txt carried the metrics header but no
+# rows - main() had not run yet when the report cat-ed the TSV. Run the script
+# with a tiny workload and require the table in the report itself.
+perf_dir="$TMP/performance"
+bash "$REPO_ROOT/build/measure-performance.sh" --out-dir "$perf_dir" \
+    --cpu-mib 1 --disk-mib 1 --sample-seconds 1 >/dev/null 2>&1 \
+    || fail "build/measure-performance.sh did not produce a report"
+grep -q $'^memory_used\t' "$perf_dir/performance.txt" \
+    || fail "performance.txt does not contain the metrics table rows"
+ok "the performance report contains the metrics it measured"
+
 printf '\nAll %d smoke checks passed.\n' "$pass"

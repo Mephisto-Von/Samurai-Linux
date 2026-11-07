@@ -231,13 +231,17 @@ EOF
 
 # The report file must hold the same text the console saw, so the run is
 # auditable from the CI artifact alone.
+# main writes the metrics as it goes, so it has to run before the report reads
+# them: the first version cat-ed "$metrics" first, and the published report
+# carried only the table header (run 42386883894 failed its performance gate on
+# a complete performance-metrics.tsv because of it).
 {
     printf '# Samurai Linux performance measurement\n\n'
     printf 'Produced by build/measure-performance.sh on the host named below.\n\n'
     printf '```\n'
-    cat "$metrics"
+    main
     printf '```\n\n'
     printf '```\n'
-    main
+    cat "$metrics"
     printf '```\n'
 } | tee "$report"

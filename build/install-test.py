@@ -2350,8 +2350,16 @@ class InstallerTest:
             raise Failure(f"the installed system produced no performance report:\n{body}")
         (self.work / "performance.txt").write_bytes(report)
 
+        # The TSV is the contract; performance.txt is prose around a copy of it.
+        # Run 42386883894 parsed only the report and found an empty table block,
+        # because the script used to cat the TSV before main wrote any rows - the
+        # separate performance-metrics.tsv was complete. Pull that file and fall
+        # back to the report so either layout is readable.
+        table = self.serial.pull_file(f"{out}/performance-metrics.tsv", "performance metrics")
+        if not table:
+            table = report
         metrics: dict[str, str] = {}
-        for line in report.decode("utf-8", errors="replace").splitlines():
+        for line in table.decode("utf-8", errors="replace").splitlines():
             parts = line.split("\t")
             if len(parts) == 4 and parts[0] != "label":
                 metrics[parts[0]] = parts[1]
