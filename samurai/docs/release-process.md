@@ -57,16 +57,17 @@ loosening the comparison, because "close enough" is exactly how a green run came
 to describe an image nobody could download.
 
 The `samurai-linux-iso` artifact of build run `42105485811` is 2,942,402,229
-bytes (2.74 GiB). GitHub
-refuses a release asset larger than 2 GiB, so on today's image steps 5-7 pass
-their checks and then fail at the upload - a tag with no release behind it, the
-worst of the two outcomes. `check_asset_pairing` therefore compares the ISO
-against `SAMURAI_MAX_ASSET_BYTES` (default 2147483648) and stops before the tag.
-Resolving it means either slimming the image below 2 GiB - the desktop, firmware
-and language packagings are where the size is - or publishing the ISO somewhere
-that has no such limit and letting the GitHub Release link to it. That choice
-belongs to the project owner and is recorded here rather than made silently by
-a script.
+bytes (2.74 GiB). GitHub refuses a release asset larger than 2 GiB, so the
+gate cannot upload that image as one file. The project's answer is to publish
+it in parts: `check_asset_pairing` splits an ISO above
+`SAMURAI_MAX_ASSET_BYTES` (default 2147483648) into pieces of at most
+`SAMURAI_SPLIT_PART_BYTES` (default 1992294400, 1900 MiB), refuses to continue
+unless the parts rebuild the SHA-256 recorded beside the ISO, writes a
+`*.parts.sha256` file and `REASSEMBLE.txt`, and the release workflow uploads
+the parts instead of the ISO. A user reassembles with `cat`, checks the parts
+and the whole image, and verifies the signature. The gate self-test exercises
+the split, a mismatched checksum, and the whole-file path with a lowered
+ceiling, so this is a tested decision rather than a note.
 
 ## Release Acceptance Criteria
 
@@ -88,7 +89,7 @@ it:
 | 13 | Recovery and upgrade procedures documented | documented; `samurai-recovery` is tested for snapshot/verify/restore-etc, not for a full state rollback |
 | 14 | Critical defects resolved or blocking release | tracked in `known-limitations.md` |
 | 15 | Build and release instructions complete | yes |
-| 16 | Checksums and GPG signature verify against the published ISO | signing and verification steps exist in CI and have never run on a green build; `scripts/release-gate.sh` now verifies both against `samurai/keys/` before anything is published, and refuses an ISO larger than the release host accepts |
+| 16 | Checksums and GPG signature verify against the published ISO | signing and verification steps exist in CI and have never run on a green build; `scripts/release-gate.sh` now verifies both against `samurai/keys/` before anything is published, and splits an ISO larger than the release host accepts into parts whose reassembly it verifies |
 | 17 | APT repository publication and upgrade path tested | **not met** - no Samurai APT repository exists |
 
 ## Signing and Publication
