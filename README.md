@@ -10,8 +10,9 @@ relying on any part of it.
 - **Desktop**: KDE Plasma
 - **Themes**: Kuro (Dark, `#111214`) and Shiro (Light, `#F5F0E6`) KDE color
   schemes, with a Japanese Samurai-inspired palette (crimson and gold accents).
-  22 Samurai wallpapers (1920x1080) are installed system-wide; icons and
-  cursors are still planned.
+  22 Samurai wallpapers (3840x2160) are installed system-wide, and the Samurai
+  Customization Hub manages themes, colours and wallpapers; icons and cursors
+  are still planned.
 
 ## Repository Layout
 
@@ -31,9 +32,10 @@ relying on any part of it.
 │   ├── README.md                - Edition overview and quick links
 │   ├── docs/                    - Maintained specifications
 │   ├── configs/                 - Legacy copies; prefer docs/
-│   ├── scripts/                 - samurai-ai, samurai-theme, samurai-gaming,
-│   │                              samurai-profile, samurai-recovery
-│   └── themes/{kuro,shiro}/     - KDE .colors schemes + palette CSS
+│   ├── desktop/                 - Customization Hub: Qt window, presets, launcher
+│   ├── scripts/                 - samurai-ai, samurai-theme, samurai-customize,
+│   │                              samurai-gaming, samurai-profile, samurai-recovery
+│   └── themes/<theme>/          - KDE .colors schemes, rendered from the presets
 ├── scripts/
 │   ├── analyze-iso.sh           - Analyze a built ISO with REA
 │   ├── post-build-workflow.sh   - Optional REA + Heretic workflow
@@ -49,6 +51,18 @@ samurai-theme kuro     # Apply dark theme
 samurai-theme shiro     # Apply light theme
 samurai-theme auto      # Time-of-day automatic switching
 samurai-theme list      # List available themes
+```
+
+### Customization Hub
+```bash
+samurai-customize                  # Open the Hub: themes, colours, wallpapers, effects
+samurai-customize --core --verify  # Check the installed presets and wallpapers
+```
+
+### Customization Hub
+```bash
+samurai-customize                  # Open the Hub: themes, colours, wallpapers, effects
+samurai-customize --core --verify  # Check the installed presets and wallpapers
 ```
 
 ### AI Assistant
@@ -140,7 +154,8 @@ armored detached `.sig` when signing is enabled.
 |---|---|
 | Architecture & design documentation | Corrected to describe what is built; the aspirational claims and invented baselines have been removed |
 | Foundation decision | Debian 13 `live-build`, approved as a deviation from the Linux-from-Scratch requirement and recorded in [`samurai/docs/architecture.md`](samurai/docs/architecture.md) |
-| Kuro / Shiro KDE `.colors` schemes | Implemented; 22 wallpapers at 1920x1080 shipped; icons/cursors pending |
+| Eight KDE `.colors` themes | Implemented: Kuro, Shiro, Ronin, Blood Moon, Moonlight, Cyber Samurai, Sakura, Sunset Blade; 22 wallpapers at 3840x2160 shipped; icons/cursors pending |
+| Samurai Customization Hub | Implemented as a Qt window (`samurai-customize`): live theme preview, per-role colours, 4K wallpaper gallery with per-screen and rotation support, desktop effects. Not a System Settings module, and sharing is file export/import - there is no hosted marketplace |
 | `samurai-ai` CLI | Implemented and smoke-tested; no AI runtime ships, cloud chat not implemented |
 | `samurai-theme` CLI | Applies real KDE color schemes; the install test's desktop phase checks it against a live Plasma session, and run `42392182476` completed that phase green |
 | `samurai-gaming` CLI | Installs `steam-installer`, GameMode, MangoHUD and optional tools; refuses to pretend when `non-free` is off |

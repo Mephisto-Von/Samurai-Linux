@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Samurai Customization Hub launcher.
+#
+# The Hub lives in /usr/share/samurai/hub so that the window and its data travel
+# with the image; this wrapper finds it, and answers the non-GUI commands in the
+# core module without importing Qt (the rotation timer calls us every N minutes
+# and must not pay for a GUI toolkit).
+set -euo pipefail
+
+SELF_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
+HUB_DIR="${SAMURAI_HUB_DIR:-}"
+if [[ -z "$HUB_DIR" ]]; then
+    for candidate in /usr/share/samurai/hub "$SELF_DIR/../desktop/hub" "$SELF_DIR/hub"; do
+        if [[ -f "$candidate/samurai_customize.py" ]]; then
+            HUB_DIR="$candidate"
+            break
+        fi
+    done
+fi
+
+die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+
+[[ -n "$HUB_DIR" ]] || die "the Customization Hub files are not installed (looked in /usr/share/samurai/hub)"
+command -v python3 >/dev/null 2>&1 || die "python3 is required"
+
+case "${1:-}" in
+    --help|-h|--verify|--list-presets|--list-wallpapers|--next-wallpaper|--render-schemes)
+        case "${1:-}" in
+            --render-schemes)
+                shift
+                exec python3 "$HUB_DIR/render-schemes.py" "$@"
+                ;;
+            *)
+                exec python3 "$HUB_DIR/samurai_hub_core.py" "$@"
+                ;;
+        esac
+        ;;
+esac
+
+if [[ "${1:-}" == "--core" ]]; then
+    # Used by tests and by anyone scripting the Hub without a display.
+    shift
+    exec python3 "$HUB_DIR/samurai_hub_core.py" "$@"
+fi
+
+exec python3 "$HUB_DIR/samurai_customize.py" "$@"

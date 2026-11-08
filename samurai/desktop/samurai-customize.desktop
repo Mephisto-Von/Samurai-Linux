@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Samurai Customization Hub
+GenericName=Desktop Appearance
+Comment=Change themes, colours, wallpapers and desktop effects
+Exec=/usr/local/bin/samurai-customize
+Icon=preferences-desktop-theme
+Terminal=false
+Categories=Settings;DesktopSettings;Qt;
+Keywords=theme;colour;color;wallpaper;appearance;plasma;samurai;
+OnlyShowIn=KDE;
+StartupNotify=true
+StartupWMClass=samurai_customize.py

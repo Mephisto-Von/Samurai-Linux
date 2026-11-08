@@ -1,0 +1,141 @@
+{
+  "schema": 1,
+  "presets": [
+    {
+      "slug": "kuro",
+      "name": "Kuro",
+      "tagline": "Ink black, crimson and antique gold.",
+      "dark": true,
+      "wallpaper": "kuro",
+      "palette": {
+        "background": "#111214",
+        "panel": "#1B1D20",
+        "surface": "#25272B",
+        "text": "#F2EEE5",
+        "text_dim": "#B8B4AC",
+        "accent": "#B52832",
+        "gold": "#B89A59",
+        "border": "#383A3D"
+      }
+    },
+    {
+      "slug": "shiro",
+      "name": "Shiro",
+      "tagline": "Ivory paper, charcoal ink, muted vermilion.",
+      "dark": false,
+      "wallpaper": "shiro",
+      "palette": {
+        "background": "#F5F0E6",
+        "panel": "#ECE5D8",
+        "surface": "#FFFDF8",
+        "text": "#242321",
+        "text_dim": "#686258",
+        "accent": "#B52832",
+        "gold": "#96733B",
+        "border": "#D8D0C2"
+      }
+    },
+    {
+      "slug": "ronin",
+      "name": "Ronin",
+      "tagline": "Charcoal, worn steel and moonlight blue.",
+      "dark": true,
+      "wallpaper": "misty-forest",
+      "palette": {
+        "background": "#14171A",
+        "panel": "#1C2126",
+        "surface": "#262D33",
+        "text": "#E8EDF2",
+        "text_dim": "#9AA6B2",
+        "accent": "#5B8DB8",
+        "gold": "#8FA6B8",
+        "border": "#333C44"
+      }
+    },
+    {
+      "slug": "blood-moon",
+      "name": "Blood Moon",
+      "tagline": "Black lacquer under a deep crimson moon.",
+      "dark": true,
+      "wallpaper": "crimson-moon",
+      "palette": {
+        "background": "#0C0A0B",
+        "panel": "#171214",
+        "surface": "#241A1D",
+        "text": "#F2E8E9",
+        "text_dim": "#A89496",
+        "accent": "#8E1220",
+        "gold": "#A9784B",
+        "border": "#35262A"
+      }
+    },
+    {
+      "slug": "moonlight",
+      "name": "Moonlight",
+      "tagline": "Midnight blue with a silver edge.",
+      "dark": true,
+      "wallpaper": "moonlit-tree",
+      "palette": {
+        "background": "#0D1420",
+        "panel": "#141D2C",
+        "surface": "#1D283A",
+        "text": "#E6ECF5",
+        "text_dim": "#94A3BA",
+        "accent": "#8FA9C9",
+        "gold": "#C7CEDB",
+        "border": "#2A3648"
+      }
+    },
+    {
+      "slug": "cyber-samurai",
+      "name": "Cyber Samurai",
+      "tagline": "Navy circuitry, restrained neon cyan.",
+      "dark": true,
+      "wallpaper": "neon-city-rain",
+      "palette": {
+        "background": "#0A1018",
+        "panel": "#101A24",
+        "surface": "#16232F",
+        "text": "#E4F1F6",
+        "text_dim": "#8FA6B4",
+        "accent": "#22C7D6",
+        "gold": "#7FE3EC",
+        "border": "#1F303D"
+      }
+    },
+    {
+      "slug": "sakura",
+      "name": "Sakura",
+      "tagline": "Ivory paper with blossom pink and charcoal.",
+      "dark": false,
+      "wallpaper": "moonlit-antlers",
+      "palette": {
+        "background": "#FBF4F3",
+        "panel": "#F4E6E6",
+        "surface": "#FFFBFB",
+        "text": "#2A2224",
+        "text_dim": "#6E5C60",
+        "accent": "#C25470",
+        "gold": "#A9714F",
+        "border": "#E4D2D4"
+      }
+    },
+    {
+      "slug": "sunset-blade",
+      "name": "Sunset Blade",
+      "tagline": "Ember orange over dark red and black.",
+      "dark": true,
+      "wallpaper": "sunset-roof",
+      "palette": {
+        "background": "#100B09",
+        "panel": "#1B1210",
+        "surface": "#271915",
+        "text": "#F5EADF",
+        "text_dim": "#B09A8A",
+        "accent": "#E0662A",
+        "gold": "#E8A33D",
+        "border": "#372319"
+      }
+    }
+  ]
+}

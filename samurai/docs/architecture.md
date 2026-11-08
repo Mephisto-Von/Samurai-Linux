@@ -227,18 +227,23 @@ What it costs, and what is therefore recorded as a known limitation:
 > GRUB branding and the installer artwork ship and are checked by
 > `build/verify-iso.sh`; the icon set and cursor theme are still planned. See
 > [`desktop-and-themes.md`](desktop-and-themes.md).
-- Kuro and Shiro themes as specified
+- Eight themes as implemented (Kuro, Shiro, Ronin, Blood Moon, Moonlight,
+  Cyber Samurai, Sakura, Sunset Blade)
 - Original wallpapers, logos, icons, terminal colors, login branding, installer artwork
 - Japanese Samurai-inspired motifs with restraint
 
 ## System Dashboard and Settings
 
-> Status: not implemented. There is no Samurai Control Center, no dashboard
-> package and no first-boot wizard; the installed system boots to SDDM and the
-> configuration entry points are the CLIs in `/usr/local/bin`
-> (`samurai-theme`, `samurai-ai`, `samurai-gaming`, `samurai-profile`,
-> `samurai-recovery`). Everything listed below is the target design for a
-> dashboard that does not exist yet.
+> Status: partially implemented. Appearance has a real front end now - the
+> Samurai Customization Hub (`samurai-customize`), a Qt window that changes
+> themes, colours, wallpapers and desktop effects without a terminal; see
+> [`customization-hub.md`](customization-hub.md). There is still no Samurai
+> Control Center, no dashboard package and no first-boot wizard, and the Hub
+> is deliberately not a System Settings KCM. The installed system boots to
+> SDDM, and the remaining configuration entry points are the CLIs in
+> `/usr/local/bin` (`samurai-theme`, `samurai-ai`, `samurai-gaming`,
+> `samurai-profile`, `samurai-recovery`). The rest of this section is the
+> target design for the dashboard that does not exist yet.
 - Samurai Control Center using KDE-compatible technologies
 - System information, hardware/driver status, software/updates
 - AI models and providers, development profiles, gaming configuration
@@ -288,6 +293,7 @@ What it costs, and what is therefore recorded as a known limitation:
 - samurai/docs/installation.md
 - samurai/docs/testing.md
 - samurai/docs/release-process.md
+- samurai/docs/customization-hub.md
 - samurai/docs/known-limitations.md
 
 ## Release Acceptance Criteria

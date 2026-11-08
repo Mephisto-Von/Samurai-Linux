@@ -22,6 +22,9 @@ samurai-ai credentials remove openai
 
 # Gaming launcher argument handling (uses a fake steam binary)
 samurai-gaming steam --foo
+
+# Customization Hub data, package validation and Plasma calls
+samurai-customize --core --verify
 ```
 
 It also fails closed on repository-level lies: a shell call whose quoted message
@@ -140,6 +143,12 @@ session; it does not prove both palettes. What it asserts today:
   non-blank frame
 - both scheme files parse and carry their expected `ColorScheme` name
   (`tests/smoke.sh`)
+- the Customization Hub's logic (`tests/smoke.sh`): all 22 wallpapers are
+  3840x2160 (read from the JPEG frame headers), every preset resolves to a
+  committed scheme that is exactly what `presets.json` renders, and a theme
+  package imports when valid while being refused for a script, a traversal
+  path, a symlink, an executable bit, an absolute path and an incomplete
+  manifest
 
 Not automated yet, and therefore not claimed:
 
@@ -148,7 +157,11 @@ Not automated yet, and therefore not claimed:
 - theme persistence across logout or reboot
 - `samurai-theme auto` switching by time of day
 - contrast ratios and visible focus states: the palettes are *targeted* at WCAG
-  AA, but no ratio has been measured
+  AA, and the Hub now computes the ratios and warns below 4.5:1, but no
+  rendered palette has been measured against them
+- the Customization Hub window itself: it has been rendered offscreen and
+  inspected, but no automated test drives its buttons, and none of its Plasma
+  calls has run against a live session
 
 ### 6. AI Runtime Tests
 

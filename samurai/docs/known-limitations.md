@@ -105,6 +105,24 @@
   AI runtime to cap.
 
 ## Desktop and Themes
+- **The Customization Hub is a standalone app, not a System Settings module** -
+  Plasma's System Settings only hosts KCM plugins, which are C++/QML, so the
+  Hub opens from the application launcher, the desktop icon or
+  `samurai-customize`. It is not in System Settings and will not be without a
+  KCM being written
+- **No theme marketplace** - theme packages export and import as `.zip`
+  files, and the importer validates them before writing anything, but there is
+  no hosted catalog, account or upload: sharing means sending someone a file
+- **The Hub's Plasma calls are unproven on a real session** - the window, the
+  colour maths, the scheme renderer and the package validator were exercised;
+  applying a scheme, wallpaper, lock screen, panel geometry or KWin effect
+  through this window was not, because the build and test machines have no
+  Plasma session. The tools it calls are the ones `samurai-theme` already uses
+  in a green install test
+- **The 4K wallpapers are authored, not captured at 4K** - the source art is
+  236-760 px wide, so the 3840x2160 files are a deliberate upscale (sharpen,
+  film grain, vignette, and a blurred bleed behind portrait art). They are
+  crisp at desktop size, not detail that was never in the source
 - **Icons and cursors are pending** - the Kuro/Shiro color schemes and 22
   Samurai wallpapers ship with the image, but the custom icon set and cursors
   are still planned

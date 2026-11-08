@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "wallpapers": {
+    "kuro.jpg": {"title": "Kuro", "category": "Icons", "tags": ["monochrome", "moon", "duel"]},
+    "shiro.jpg": {"title": "Shiro", "category": "Landscapes", "tags": ["ink", "paper", "still"]},
+    "crimson-moon.jpg": {"title": "Crimson Moon", "category": "Crimson", "tags": ["moon", "red", "moody"]},
+    "forest-duel.jpg": {"title": "Forest Duel", "category": "Characters", "tags": ["forest", "duel", "green"]},
+    "moonlit-tree.jpg": {"title": "Moonlit Tree", "category": "Landscapes", "tags": ["night", "tree", "blue"]},
+    "torii-wave.jpg": {"title": "Torii Wave", "category": "Landscapes", "tags": ["torii", "sea", "ink"]},
+    "moonlit-antlers.jpg": {"title": "Moonlit Antlers", "category": "Landscapes", "tags": ["night", "forest", "silver"]},
+    "neon-city-rain.jpg": {"title": "Neon City Rain", "category": "Neon", "tags": ["city", "rain", "cyan"]},
+    "golden-ring.jpg": {"title": "Golden Ring", "category": "Crimson", "tags": ["gold", "circle", "warm"]},
+    "ember-blade.jpg": {"title": "Ember Blade", "category": "Crimson", "tags": ["fire", "blade", "orange"]},
+    "neon-violet.jpg": {"title": "Neon Violet", "category": "Neon", "tags": ["violet", "night", "glow"]},
+    "neon-triangle.jpg": {"title": "Neon Triangle", "category": "Neon", "tags": ["geometry", "violet", "night"]},
+    "glitch-cyan.jpg": {"title": "Glitch Cyan", "category": "Neon", "tags": ["glitch", "cyan", "digital"]},
+    "staff-keeper.jpg": {"title": "Staff Keeper", "category": "Characters", "tags": ["figure", "staff", "warm"]},
+    "glitch-katana.jpg": {"title": "Glitch Katana", "category": "Characters", "tags": ["katana", "glitch", "red"]},
+    "sunset-roof.jpg": {"title": "Sunset Roof", "category": "Landscapes", "tags": ["sunset", "roof", "orange"]},
+    "crimson-duel.jpg": {"title": "Crimson Duel", "category": "Characters", "tags": ["duel", "red", "blades"]},
+    "misty-forest.jpg": {"title": "Misty Forest", "category": "Landscapes", "tags": ["mist", "forest", "blue"]},
+    "ink-leap.jpg": {"title": "Ink Leap", "category": "Characters", "tags": ["ink", "motion", "paper"]},
+    "golden-hour-duel.jpg": {"title": "Golden Hour Duel", "category": "Characters", "tags": ["duel", "gold", "evening"]},
+    "crimson-faces.jpg": {"title": "Crimson Faces", "category": "Crimson", "tags": ["masks", "red", "ink"]},
+    "torii-duel.jpg": {"title": "Torii Duel", "category": "Characters", "tags": ["torii", "duel", "red"]}
+  }
+}

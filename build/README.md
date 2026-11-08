@@ -274,9 +274,16 @@ GPU in QEMU).
   to get it.
 - `samurai-ai`, `samurai-theme`, `samurai-gaming`, `samurai-profile` and
   `samurai-recovery` in `/usr/local/bin`
-- Kuro and Shiro KDE color schemes in `/usr/share/color-schemes`
-- 22 Samurai wallpapers in `/usr/share/backgrounds/samurai`; `samurai-theme`
-  applies the theme's wallpaper (`kuro.jpg` / `shiro.jpg`) on theme switch
+- Eight KDE color schemes in `/usr/share/color-schemes`, rendered from
+  `samurai/desktop/hub/presets.json`
+- 22 Samurai wallpapers at 3840x2160 in `/usr/share/backgrounds/samurai`;
+  `samurai-theme` applies the theme's wallpaper (`kuro.jpg` / `shiro.jpg`) on
+  theme switch
+- The **Samurai Customization Hub** (`samurai-customize`, plus a menu entry and
+  a desktop icon for new accounts): themes, per-role colours, wallpaper gallery
+  with per-screen and rotation support, lock screen image, and KDE desktop
+  effects. It needs `python3-pyside6.qtwidgets` and `python3-pil`, both in the
+  package list
 - Kuro applied for new users; the theme autostart entry restores the last selection
   and applies the matching wallpaper
 - Calamares installer with Samurai branding, launched from the live desktop or
@@ -302,8 +309,9 @@ GPU in QEMU).
 | `build/config/includes.chroot/` | Files copied verbatim into the ISO |
 | `samurai/scripts/` | Source of truth for the five CLIs |
 | `samurai/themes/` | Source of truth for the KDE `.colors` schemes |
+| `samurai/desktop/` | The Customization Hub: Qt window, presets, data, launcher entry |
 | `Samurai Walls/` | Source art for the wallpapers and installer slide |
-| `build/make-wallpapers.py` | Generates 1920x1080 wallpapers + the Calamares slide from that art |
+| `build/make-wallpapers.py` | Generates 3840x2160 wallpapers + the Calamares slide from that art |
 
 The generated copies under `build/config/includes.chroot/usr/local/bin/` and `.../usr/share/samurai/themes/` are ignored by Git; `build.sh` recreates them on every run. The generated wallpapers under `.../usr/share/backgrounds/samurai/` and `.../etc/calamares/branding/samurai/slide1.png` **are** committed, so ISO builds do not need Pillow; rerun `python3 build/make-wallpapers.py` after changing the source art.
 

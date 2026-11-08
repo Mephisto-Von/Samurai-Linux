@@ -178,6 +178,8 @@ assert_file usr/local/bin/samurai-theme
 assert_file usr/local/bin/samurai-gaming
 assert_file usr/local/bin/samurai-profile
 assert_file usr/local/bin/samurai-recovery
+assert_file usr/local/bin/samurai-customize
+assert_file usr/share/samurai/hub/samurai_hub_core.py
 assert_file usr/bin/dbus-send
 assert_file usr/bin/gdbus
 assert_file etc/nftables.conf
@@ -255,11 +257,40 @@ cmp -s "$ROOT/usr/share/samurai/boot/grub-splash.png" \
     || die "the installed GRUB splash is not the Samurai splash"
 
 log "Checking desktop wallpapers"
-for wallpaper in kuro.jpg shiro.jpg; do
-    cmp -s "$ROOT/usr/share/backgrounds/samurai/$wallpaper" \
-        "$REPO_ROOT/build/config/includes.chroot/usr/share/backgrounds/samurai/$wallpaper" \
-        || die "/usr/share/backgrounds/samurai/$wallpaper is not the Samurai wallpaper"
+# Every wallpaper, not only the two theme defaults: the Hub offers all of them
+# and a stale 1080p file next to a documented 4K set would go unnoticed here.
+for wallpaper in "$REPO_ROOT"/build/config/includes.chroot/usr/share/backgrounds/samurai/*.jpg; do
+    name=$(basename "$wallpaper")
+    cmp -s "$ROOT/usr/share/backgrounds/samurai/$name" "$wallpaper" \
+        || die "/usr/share/backgrounds/samurai/$name is not the Samurai wallpaper"
 done
+
+log "Checking the customization hub"
+grep -q 'usr/share/samurai/hub' "$REPO_ROOT/build/build.sh" \
+    || die "build.sh does not stage the customization hub from samurai/desktop/hub"
+assert_file usr/share/samurai/hub/samurai_customize.py
+assert_file usr/share/samurai/hub/samurai_hub_core.py
+assert_file usr/share/samurai/hub/presets.json
+assert_file usr/share/samurai/hub/wallpapers.json
+assert_file usr/local/bin/samurai-customize
+assert_file usr/share/applications/samurai-customize.desktop
+assert_file etc/skel/Desktop/samurai-customize.desktop
+assert_contains usr/share/applications/samurai-customize.desktop '^Exec=/usr/local/bin/samurai-customize$'
+assert_contains usr/share/applications/samurai-customize.desktop '^Name=Samurai Customization Hub$'
+# The hook installs every theme's scheme; a preset with no scheme in the image
+# is a theme the Hub lists and cannot apply.
+for scheme in "$REPO_ROOT"/samurai/themes/*/*.colors; do
+    name=$(basename "$scheme")
+    assert_file "usr/share/color-schemes/$name"
+done
+if command -v python3 >/dev/null 2>&1; then
+    hub_problems=$(SAMURAI_THEME_DIR="$ROOT/usr/share/samurai/themes" \
+        SAMURAI_WALLPAPER_DIR="$ROOT/usr/share/backgrounds/samurai" \
+        python3 "$ROOT/usr/share/samurai/hub/samurai_hub_core.py" --verify 2>&1 || true)
+    [[ -z "$hub_problems" ]] \
+        || die "the hub's own consistency check fails against the image:"$'\n'"$hub_problems"
+    log "the hub's presets, schemes and wallpapers agree in the image"
+fi
 
 log "Checking that the live rootfs can run update-grub"
 # Calamares' calamares-bootloader-config helper ends with update-grub, which

@@ -83,8 +83,11 @@ and activated with `plasma-apply-colorscheme samurai-shiro`.
 
 ## Wallpapers
 
-The image ships 22 wallpapers in `/usr/share/backgrounds/samurai/`, generated
-from the Samurai art collection with `build/make-wallpapers.py`:
+The image ships 22 wallpapers at 3840x2160 in `/usr/share/backgrounds/samurai/`,
+generated from the Samurai art collection with `build/make-wallpapers.py`. The
+source art is small (236-760 px wide), so the generator upscales it deliberately
+and finishes each frame with a sharpen pass, fine grain and a vignette; a plain
+resize reads as a blown-up thumbnail, this reads as depth of field:
 
 - `kuro.jpg` and `shiro.jpg` are the theme defaults. `samurai-theme` applies
   the one matching the selected theme with `plasma-apply-wallpaperimage`, and
@@ -92,7 +95,7 @@ from the Samurai art collection with `build/make-wallpapers.py`:
   live session and freshly installed systems both start with Kuro colors and
   the moonlit wallpaper.
 - Portrait sources are placed, fit to full height, over a blurred copy of
-  themselves; landscape sources are scaled and centre-cropped to 1920x1080, so
+  themselves; landscape sources are scaled and centre-cropped to 3840x2160, so
   nothing is distorted.
 - The other 20 wallpapers (`crimson-moon.jpg`, `moonlit-tree.jpg`, ...) are
   available in the Plasma wallpaper picker.
@@ -106,6 +109,16 @@ python3 build/make-wallpapers.py
 The generated files are committed, so ISO builds do not need Pillow.
 
 ## Theme Selector
+
+Eight themes ship: Kuro, Shiro, Ronin, Blood Moon, Moonlight, Cyber Samurai,
+Sakura and Sunset Blade. The palettes live in one file
+(`samurai/desktop/hub/presets.json`) and the committed KDE schemes are rendered
+from it, so what the Hub shows and what Plasma installs are the same colours.
+See [`customization-hub.md`](customization-hub.md).
+
+- **Samurai Customization Hub** - `samurai-customize` opens a window with live
+  theme preview, per-role colour editing, a 4K wallpaper gallery, multi-monitor
+  and rotation support, and desktop effects
 - **Persistent theme selector** in System Settings -> Appearance
 - **CLI selector** - `samurai-theme kuro|shiro|list|status|wallpaper|random`
 - **Auto mode** - `samurai-theme auto` switches at 06:00 and 18:00

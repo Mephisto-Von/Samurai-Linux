@@ -104,11 +104,20 @@ sync_assets() {
     local includes="$BUILD_DIR/config/includes.chroot"
     local bin="$includes/usr/local/bin"
     local themes="$includes/usr/share/samurai/themes"
+    local hub="$includes/usr/share/samurai/hub"
+    local apps="$includes/usr/share/applications"
+    local skel="$includes/etc/skel/Desktop"
 
-    rm -rf "$bin" "$themes"
-    install -d -m 0755 "$bin" "$themes"
+    rm -rf "$bin" "$themes" "$hub"
+    install -d -m 0755 "$bin" "$themes" "$hub" "$apps" "$skel"
     cp -a "$REPO_ROOT/samurai/scripts/." "$bin/"
     cp -a "$REPO_ROOT/samurai/themes/." "$themes/"
+    cp -a "$REPO_ROOT/samurai/desktop/hub/." "$hub/"
+    # __pycache__ from a local run is not something an image should carry.
+    find "$hub" -name '__pycache__' -prune -exec rm -rf {} +
+    install -m 0644 "$REPO_ROOT/samurai/desktop/samurai-customize.desktop" "$apps/"
+    # New accounts get the Hub on the desktop as well as in the launcher.
+    install -m 0755 "$REPO_ROOT/samurai/desktop/samurai-customize.desktop" "$skel/"
 
     find "$bin" -maxdepth 1 -type f -name 'samurai-*' -exec chmod 0755 {} +
     if [[ -d "$BUILD_DIR/config/hooks" ]]; then
@@ -120,7 +129,7 @@ sync_assets() {
     # build staged before it copies what this one stages" is worth testing on a
     # machine with no live-build on it: see `bash build/stage-variant.sh --self-test`.
     bash "$BUILD_DIR/stage-variant.sh" --variant "$VARIANT" --build-dir "$BUILD_DIR"
-    log "Synced scripts and themes into config/includes.chroot"
+    log "Synced scripts, themes and the customization hub into config/includes.chroot"
 }
 
 run_config() {

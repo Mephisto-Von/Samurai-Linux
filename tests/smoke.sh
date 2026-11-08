@@ -908,4 +908,242 @@ grep -q $'^memory_used\t' "$perf_dir/performance.txt" \
     || fail "performance.txt does not contain the metrics table rows"
 ok "the performance report contains the metrics it measured"
 
+# 28. The wallpapers are the 4K set the documents publish. The frame header is
+# read instead of decoding 22 4K images: the suite runs on every commit, and a
+# 1080p file left behind by a partial regeneration is exactly the mistake this
+# catches.
+if command -v python3 >/dev/null 2>&1; then
+    wallpaper_dir="$REPO_ROOT/build/config/includes.chroot/usr/share/backgrounds/samurai"
+    if ! wallpaper_problems=$(python3 - "$wallpaper_dir" <<'PY'
+import pathlib
+import struct
+import sys
+
+directory = pathlib.Path(sys.argv[1])
+
+
+def jpeg_size(path: pathlib.Path):
+    with path.open("rb") as handle:
+        if handle.read(2) != b"\xff\xd8":
+            return None
+        while True:
+            byte = handle.read(1)
+            if not byte:
+                return None
+            if byte != b"\xff":
+                continue
+            marker = handle.read(1)
+            while marker == b"\xff":
+                marker = handle.read(1)
+            if not marker:
+                return None
+            code = marker[0]
+            if code == 0x01 or 0xD0 <= code <= 0xD9:
+                continue
+            length = struct.unpack(">H", handle.read(2))[0]
+            if 0xC0 <= code <= 0xCF and code not in (0xC4, 0xC8, 0xCC):
+                data = handle.read(5)
+                height, width = struct.unpack(">HH", data[1:5])
+                return width, height
+            handle.seek(length - 2, 1)
+
+
+problems = []
+files = sorted(directory.glob("*.jpg"))
+if len(files) != 22:
+    problems.append(f"expected 22 wallpapers, found {len(files)}")
+for path in files:
+    size = jpeg_size(path)
+    if size is None:
+        problems.append(f"{path.name}: no readable JPEG frame header")
+    elif size != (3840, 2160):
+        problems.append(f"{path.name}: {size[0]}x{size[1]}")
+print("\n".join(problems))
+sys.exit(1 if problems else 0)
+PY
+    ); then
+        fail "the wallpapers are not the 4K set: $wallpaper_problems"
+    fi
+    grep -q 'WALLPAPER_SIZE = (3840, 2160)' "$REPO_ROOT/build/make-wallpapers.py" \
+        || fail "build/make-wallpapers.py no longer generates 4K wallpapers"
+    ok "all 22 wallpapers are 3840x2160 and the generator produces that size"
+else
+    printf 'skip - python3 not installed, wallpaper sizes were not checked\n'
+fi
+
+# 29. The Customization Hub is four things that have to agree: the presets it
+# lists, the KDE schemes those presets render to, the wallpaper metadata, and
+# the parallel wiring that puts the app in the image. Checking any one alone
+# would miss the failure that matters - a theme the Hub offers and cannot apply.
+hub="$REPO_ROOT/samurai/desktop/hub"
+for asset in samurai_customize.py samurai_hub_core.py presets.json wallpapers.json render-schemes.py; do
+    assert_file "$hub/$asset"
+done
+assert_file "$REPO_ROOT/samurai/desktop/samurai-customize.desktop"
+assert_file "$REPO_ROOT/samurai/scripts/samurai-customize"
+grep -q '^Exec=/usr/local/bin/samurai-customize$' "$REPO_ROOT/samurai/desktop/samurai-customize.desktop" \
+    || fail "the Hub's desktop entry does not launch the installed launcher"
+grep -q 'python3-pyside6.qtwidgets' "$REPO_ROOT/build/config/package-lists/samurai.list.chroot" \
+    || fail "the image does not install the Qt bindings the Hub needs"
+grep -q 'usr/share/samurai/hub' "$REPO_ROOT/build/build.sh" \
+    || fail "build.sh does not stage the Hub into the image"
+if command -v python3 >/dev/null 2>&1; then
+    if ! hub_problems=$(python3 "$hub/samurai_hub_core.py" --verify 2>&1); then
+        fail "the Hub's data is inconsistent: $hub_problems"
+    fi
+    # The committed schemes are generated from presets.json; a hand edit to one
+    # of them would silently diverge from the palette the Hub applies live.
+    if ! scheme_problems=$(python3 "$hub/render-schemes.py" --check 2>&1); then
+        fail "the committed color schemes are not what presets.json renders: $scheme_problems"
+    fi
+    preset_count=$(python3 "$hub/samurai_hub_core.py" --list-presets | wc -l | tr -d '[:space:]')
+    (( preset_count >= 8 )) || fail "expected at least 8 built-in themes, found $preset_count"
+    help_output=$(SAMURAI_HUB_DIR="$hub" bash "$REPO_ROOT/samurai/scripts/samurai-customize" --help)
+    assert_contains "$help_output" 'Customization Hub' 'hub launcher --help'
+    ok "the Hub, its 8 presets, the scheme renderer and its launcher agree"
+else
+    printf 'skip - python3 not installed, the Hub data was not checked\n'
+fi
+
+# 30. A theme package is the one input the Hub takes from outside the image, so
+# its validator has to fail closed. Both directions are run: a real exported
+# package must import, and each dangerous shape must be refused.
+if command -v python3 >/dev/null 2>&1; then
+    if ! package_problems=$(XDG_DATA_HOME="$TMP/hub-data" XDG_CONFIG_HOME="$TMP/hub-config" \
+        python3 - "$REPO_ROOT" "$TMP/packages" <<'PY'
+import json
+import pathlib
+import sys
+import zipfile
+
+root, work = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+sys.path.insert(0, str(root / "samurai/desktop/hub"))
+import samurai_hub_core as core
+
+work.mkdir(parents=True, exist_ok=True)
+paths = core.core_paths()
+preset = core.load_preset("ronin", core.load_presets(paths))
+problems = []
+
+good = core.export_package(work / "good.zip", preset)
+if core.inspect_package(good)["slug"] != "ronin":
+    problems.append("a valid package lost its slug")
+core.import_package(paths, good)
+if not (paths.library / "ronin" / "theme.json").is_file():
+    problems.append("a valid package did not import")
+
+base = json.dumps({"schema": 1, **preset.as_dict()})
+
+
+def build(name, members):
+    target = work / name
+    with zipfile.ZipFile(target, "w") as archive:
+        for member, data, mode in members:
+            info = zipfile.ZipInfo(member)
+            info.external_attr = mode << 16
+            archive.writestr(info, data)
+    return target
+
+
+cases = {
+    "a script": build(
+        "script.zip", [("theme.json", base, 0o644), ("install.sh", "#!/bin/sh\n", 0o644)]
+    ),
+    "a traversal path": build(
+        "traversal.zip", [("theme.json", base, 0o644), ("../escape.jpg", "x", 0o644)]
+    ),
+    "an executable bit": build("exec.zip", [("theme.json", base, 0o755)]),
+    "a symlink": build("link.zip", [("theme.json", base, 0o120777)]),
+    "an absolute path": build("absolute.zip", [("/etc/theme.json", base, 0o644)]),
+}
+for label, package in cases.items():
+    try:
+        core.inspect_package(package)
+    except core.InvalidPackage:
+        continue
+    problems.append(f"the Hub accepted a package containing {label}")
+
+plain = work / "plain.txt"
+plain.write_text("not a zip", encoding="utf-8")
+try:
+    core.inspect_package(plain)
+    problems.append("the Hub accepted a file that is not a zip")
+except core.InvalidPackage:
+    pass
+
+incomplete = work / "incomplete.zip"
+with zipfile.ZipFile(incomplete, "w") as archive:
+    archive.writestr("theme.json", json.dumps({"schema": 1, "slug": "x", "name": "X", "palette": {}}))
+try:
+    core.inspect_package(incomplete)
+    problems.append("the Hub accepted a manifest with no palette")
+except core.InvalidPackage:
+    pass
+
+print("\n".join(problems))
+sys.exit(1 if problems else 0)
+PY
+    ); then
+        fail "theme package handling is unsafe: $package_problems"
+    fi
+    ok "theme packages import when valid and are refused for scripts, traversal, links and exec bits"
+else
+    printf 'skip - python3 not installed, theme packages were not checked\n'
+fi
+
+# 31. What the Hub hands to Plasma has to be the call Plasma answers: the
+# wallpaper script needs the per-screen mapping and the image plugin, and the
+# rotation timer needs a schedule systemd accepts.
+if command -v python3 >/dev/null 2>&1; then
+    if ! plasma_problems=$(XDG_DATA_HOME="$TMP/plasma-data" python3 - "$REPO_ROOT" <<'PY'
+import sys
+import pathlib
+
+root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / "samurai/desktop/hub"))
+import samurai_hub_core as core
+
+problems = []
+script = core.wallpaper_script("file:///w.jpg", {1: "file:///b.jpg"})
+for needle in ("wallpaperPlugin", "d.screen", "file:///b.jpg", "writeConfig('Image'"):
+    if needle not in script:
+        problems.append(f"the wallpaper script is missing {needle}")
+
+service, timer = core.rotation_units('python3 /usr/share/samurai/hub/samurai_customize.py', 45, True)
+for needle in ("ExecStart=", "--next-wallpaper", "--shuffle"):
+    if needle not in service:
+        problems.append(f"the rotation service is missing {needle}")
+for needle in ("OnUnitActiveSec=45min", "WantedBy=timers.target"):
+    if needle not in timer:
+        problems.append(f"the rotation timer is missing {needle}")
+
+panels = core.panel_script(48, "center", "autohide")
+for needle in ("p.height = 48", "p.alignment", "p.hiding"):
+    if needle not in panels:
+        problems.append(f"the panel script is missing {needle}")
+
+if round(core.contrast_ratio("#000000", "#FFFFFF"), 1) != 21.0:
+    problems.append("contrast_ratio does not report 21:1 for black on white")
+if core.readable_text("#F2EEE5") != "#101010":
+    problems.append("readable_text does not pick dark text on a light background")
+
+# A picture the user adds lives under their own XDG data directory, because
+# /usr/share is root-owned, and it still has to reach the gallery.
+paths = core.core_paths()
+paths.user_wallpapers.mkdir(parents=True, exist_ok=True)
+(paths.user_wallpapers / "user-demo.jpg").write_bytes(b"not really a jpeg")
+if "user-demo" not in [wallpaper.stem for wallpaper in core.list_wallpapers(paths)]:
+    problems.append("a wallpaper in the user's own folder is not listed")
+
+print("\n".join(problems))
+sys.exit(1 if problems else 0)
+PY
+    ); then
+        fail "the Hub's Plasma calls are malformed: $plasma_problems"
+    fi
+    ok "the Hub builds the Plasma calls Plasma expects and lists the user's own wallpapers"
+else
+    printf 'skip - python3 not installed, the Plasma calls were not checked\n'
+fi
+
 printf '\nAll %d smoke checks passed.\n' "$pass"

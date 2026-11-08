@@ -80,6 +80,11 @@ sudo
 vim
 python3
 python3-venv
+# Samurai Customization Hub: a Qt 6 window written in Python, so it needs the
+# QtWidgets bindings (QtCore/QtGui come in as dependencies) and Pillow for
+# reading an accent colour out of a wallpaper. Both are in trixie.
+python3-pyside6.qtwidgets
+python3-pil
 build-essential
 cmake
 ninja-build
