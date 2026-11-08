@@ -35,9 +35,20 @@
 ## Graphics drivers
 
 Mesa (open-source AMD/Intel) and the Vulkan drivers ship with the image, which is
-what lets KWin composite at all. NVIDIA needs Debian's `non-free` driver packages
-and is documented, not automated: nothing in the image detects a GPU and installs
-a proprietary driver.
+what lets KWin composite at all.
+
+NVIDIA needs Debian's `non-free` driver packages, which the shipped APT sources
+do not enable. To install them by hand, add `non-free` to the `trixie` sources
+(the same edit `install-profile` asks for), then:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y nvidia-driver
+sudo reboot
+```
+
+Nothing in the image detects the GPU or installs a proprietary driver for you,
+and no NVIDIA system has been tested by this project.
 
 ## Gaming enhancers
 

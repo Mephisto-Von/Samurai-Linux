@@ -58,7 +58,8 @@ environment, which keeps a broken ML install from touching the system Python:
     ~/venv/ml/bin/pip install --index-url https://download.pytorch.org/whl/cu124 torch
 
 For an AMD GPU use ROCm's own index, and check the driver first: samurai-ai
-hardware reports the GPU and the memory a model would need.
+gpu-info reports the GPU, and samurai-ai check-compatibility <model-id> estimates
+the memory a model would need.
 EOF
 }
 

@@ -47,8 +47,9 @@ the run it came from. A metric that cannot be measured is written
   Debian default.
 - **Logging keeps the journal across reboots** (`Storage=persistent` in
   `etc/systemd/journald.conf.d/99samurai.conf`) so firewall drops and service
-  failures can be read after a restart. On the live medium `/var` is not
-  writable and journald falls back to volatile storage, which is intended.
+  failures can be read after a restart. On the live medium the root filesystem
+  is memory-backed, so the journal exists but does not survive a reboot; that
+  is intended.
 - **Gaming helpers ship, but the store does not.** `gamemode` and `mangohud`
   are in the image; Steam is installed after first boot by `samurai-gaming`.
 - **The background service set is Debian's plus KDE's `kde-standard` task**, and

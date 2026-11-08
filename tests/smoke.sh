@@ -43,6 +43,90 @@ while IFS= read -r file; do
 done < <(find_shell_files)
 ok "no message call swallowed the statement after it"
 
+# 1c. Every CLI call in the maintained documentation names a subcommand the
+# script really implements. A renamed command is invisible to syntax checks and
+# to the help text's own tests: `samurai-ai hardware` survived in prose after the
+# command became `gpu-info`, and a reader following it got an error. The command
+# list is read out of each script's main() case arms rather than copied here, so
+# adding or renaming one cannot drift from the docs again; the check is also run
+# on fixtures in both directions, because a pattern that matches nothing would
+# otherwise pass by silence.
+if command -v python3 >/dev/null 2>&1; then
+    python3 - "$REPO_ROOT" <<'PY'
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+scripts = {
+    "samurai-ai": root / "samurai/scripts/samurai-ai",
+    "samurai-theme": root / "samurai/scripts/samurai-theme",
+    "samurai-gaming": root / "samurai/scripts/samurai-gaming",
+    "samurai-profile": root / "samurai/scripts/samurai-profile",
+    "samurai-recovery": root / "samurai/scripts/samurai-recovery",
+}
+
+
+def commands(path: pathlib.Path) -> set[str]:
+    text = path.read_text(encoding="utf-8")
+    found = re.search(r"^main\(\)\s*\{", text, re.M)
+    body = text[found.start():] if found else text
+    names = set()
+    for arm in re.findall(r'^\s*([A-Za-z0-9_.|"-]+)\)', body, re.M):
+        for part in arm.split("|"):
+            part = part.strip().strip('"')
+            if re.fullmatch(r"[a-z][a-z0-9-]*", part):
+                names.add(part)
+    return names
+
+
+implemented = {tool: commands(path) for tool, path in scripts.items()}
+
+def unknown(text: str) -> list[str]:
+    """CLI calls in text whose first argument is not a command."""
+    problems = []
+    spans = re.findall(r"```[^\n]*\n(.*?)```", text, re.S)
+    spans += re.findall(r"`([^`\n]+)`", text)
+    for span in spans:
+        for line in span.splitlines():
+            line = line.split("#", 1)[0]
+            for call in re.finditer(
+                r"\b(samurai-(?:ai|theme|gaming|profile|recovery))\b"
+                r"(?:\s+([a-z][a-z0-9-]*))?",
+                line,
+            ):
+                tool, subcommand = call.group(1), call.group(2)
+                if subcommand and subcommand not in implemented[tool]:
+                    problems.append(f"{tool} {subcommand}: {line.strip()}")
+    return problems
+
+
+docs = [
+    root / "README.md",
+    root / "build/README.md",
+    root / "samurai/README.md",
+    *sorted((root / "samurai/docs").glob("*.md")),
+]
+problems = [
+    f"{doc.relative_to(root)}: {problem}"
+    for doc in docs
+    for problem in unknown(doc.read_text(encoding="utf-8"))
+]
+if problems:
+    print("\n".join(problems))
+    sys.exit(1)
+
+# Both directions: a real command must pass, an impossible one must be caught.
+if unknown("```\nsamurai-ai gpu-info\n```"):
+    sys.exit("the documented-command check rejects a command that exists")
+if not unknown("```\nsamurai-ai hardware\n```"):
+    sys.exit("the documented-command check accepts a command no script implements")
+PY
+    ok "every documented CLI command exists in a shipped script"
+else
+    printf 'skip - python3 not installed, documented commands were not checked\n'
+fi
+
 # 2. ShellCheck when available
 if command -v shellcheck >/dev/null 2>&1; then
     while IFS= read -r file; do
@@ -223,6 +307,43 @@ for theme in ("kuro", "shiro"):
 PY
     ok "KDE color schemes parse"
 fi
+
+# 5b-1. build.sh copies samurai/themes/ into the image wholesale
+# (`cp -a samurai/themes/. ...`), so any scratch file left in a theme folder
+# ships on every installed system with nothing reading it: kuro's theme-draft.txt,
+# readme-draft.txt and the two shades-*.css files did exactly that. Pin the exact
+# set a theme is made of, and prove the check rejects a stray in both directions.
+theme_offenders() {
+    local dir=$1 theme_dir theme entry name
+    for theme_dir in "$dir"/*/; do
+        [[ -d "$theme_dir" ]] || continue
+        theme=$(basename "$theme_dir")
+        for entry in "$theme_dir"*; do
+            name=$(basename "$entry")
+            case "$name" in
+                colors.css | "samurai-$theme.colors") ;;
+                *) printf '%s/%s\n' "$theme" "$name" ;;
+            esac
+        done
+    done
+}
+mkdir -p "$TMP/themes/kuro" "$TMP/themes/shiro"
+: > "$TMP/themes/kuro/colors.css"
+: > "$TMP/themes/kuro/samurai-kuro.colors"
+: > "$TMP/themes/shiro/samurai-shiro.colors"
+[[ -z "$(theme_offenders "$TMP/themes")" ]] \
+    || fail "the theme tree check flags a folder holding only a theme's own files"
+printf 'theme-draft: samurai-kuro-4k\n' > "$TMP/themes/kuro/theme-draft.txt"
+[[ "$(theme_offenders "$TMP/themes")" == "kuro/theme-draft.txt" ]] \
+    || fail "the theme tree check misses a scratch file that would ship"
+theme_strays=$(theme_offenders "$REPO_ROOT/samurai/themes")
+[[ -z "$theme_strays" ]] \
+    || fail "build.sh would ship these under /usr/share/samurai/themes, where they are not part of a theme: $(tr '\n' ' ' <<<"$theme_strays")"
+# The same rule is read off the built image by verify-iso.sh, where a stale copy
+# under config/includes.chroot cannot be caught from the repository.
+grep -q 'usr/share/samurai/themes' "$REPO_ROOT/build/verify-iso.sh" \
+    || fail "ISO verification does not check what the image ships under /usr/share/samurai/themes"
+ok "the theme folders ship only the files a theme is made of"
 
 # 5c. Calamares branding and package wiring are present
 branding="$REPO_ROOT/build/config/includes.chroot/etc/calamares/branding/samurai"

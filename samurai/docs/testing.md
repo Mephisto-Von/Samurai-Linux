@@ -26,8 +26,9 @@ samurai-gaming steam --foo
 
 It also fails closed on repository-level lies: a shell call whose quoted message
 swallowed the next command, a profile that names packages nobody resolved, a
-security policy file that no gate reads back, and a `docs/performance.md` that
-publishes a number no harness measured.
+security policy file that no gate reads back, a `docs/performance.md` that
+publishes a number no harness measured, and a file left in a theme folder that
+`build.sh` would copy into the image though nothing reads it.
 
 Do not run `samurai-gaming install-profile` as a smoke test: it installs packages
 and modifies the system.
@@ -76,7 +77,7 @@ workflow uses `QEMU_TIMEOUT=300`; the verified 2026-10-26 run reached
 For a GUI run, confirm that SDDM appears and the Plasma live session starts as
 `samurai` with the **Install Samurai Linux** icon.
 
-### 4. Installation Tests (automated, not yet green)
+### 4. Installation Tests (automated, green in CI)
 `bash build/install-test.sh <iso>` drives the real Calamares UI in QEMU and
 checks the result over the serial console. How it reaches the installer is part
 of the evidence: Calamares starts from a launcher that moves to the live
@@ -129,27 +130,57 @@ real hardware, Secure Boot, and an actual Proton title with the overlay visible
 (no GPU in QEMU).
 
 ### 5. Desktop and Theme Tests
-Covered by the `--desktop` phase above, except the hardware-only items:
 
-- Kuro applies: background `#111214`, crimson `#B52832`, gold `#B89A59`
-- Shiro applies: background `#F5F0E6`, vermilion `#B52832`, gold `#96733B`
-- Theme persists across logout/reboot
-- `samurai-theme auto` switches based on time of day
-- Contrast and visible focus states verified in both themes
+The `--desktop` phase proves that a scheme can be applied to a live Plasma
+session; it does not prove both palettes. What it asserts today:
+
+- `samurai-theme set shiro` runs in the installed session and the selection is
+  read back out of `kdeglobals`
+- the matching wallpaper is read back from Plasma and the compositor rendered a
+  non-blank frame
+- both scheme files parse and carry their expected `ColorScheme` name
+  (`tests/smoke.sh`)
+
+Not automated yet, and therefore not claimed:
+
+- Kuro and Shiro each apply with every published colour; only the scheme file
+  and the applied scheme name are checked, not the rendered palette
+- theme persistence across logout or reboot
+- `samurai-theme auto` switching by time of day
+- contrast ratios and visible focus states: the palettes are *targeted* at WCAG
+  AA, but no ratio has been measured
 
 ### 6. AI Runtime Tests
-- `samurai-ai chat` works with a configured local model
-- Local mode works with no cloud API key present
-- Cloud mode discloses external data transmission before sending
-- Model router documents selection criteria and honors user overrides
-- Resource limits pause inference under high system load
+
+None of these run in CI. The image ships no AI runtime, the guest has no model
+and no network, and cloud chat, the router and resource limits are not
+implemented (see [`ai-system.md`](ai-system.md)); this is the target list, not a
+suite:
+
+- `samurai-ai chat` works with a configured local model - needs Ollama and a
+  pulled model on a real machine
+- Local mode works with no cloud API key present - true by construction: the
+  chat path only calls `ollama` and never reads a provider credential
+- Cloud mode discloses external data transmission before sending - not
+  implemented
+- Model router documents selection criteria and honors user overrides - not
+  implemented
+- Resource limits pause inference under high system load - not implemented
 
 ### 7. Gaming Tests (on declared supported configurations)
-- Steam installs and launches via `samurai-gaming steam`
-- Proton runs at least one Windows title
-- GameMode engages (`systemctl --user status gamemoded`)
-- MangoHUD overlay displays (`MANGOHUD=1 %command%`)
-- Controller detected and usable
+
+Automated today: the desktop phase requires GameMode and MangoHUD to be
+installed and preloads the MangoHUD interposer in a live session. Everything
+else needs a GPU and a game:
+
+- Steam installs and launches via `samurai-gaming steam` - not exercised; the
+  test guest has no network and the image does not enable `non-free`
+- Proton runs at least one Windows title - never run
+- GameMode engages (`systemctl --user status gamemoded`) - only the package is
+  checked, not an engaged game
+- MangoHUD overlay displays (`MANGOHUD=1 %command%`) - only the interposer load
+  is checked, not a rendered overlay
+- Controller detected and usable - no test touches a controller
 
 ### 8. Performance Measurements
 There are no documented baselines to compare against, and there will not be any
@@ -186,6 +217,7 @@ command, host and run alongside it - see
 - The hosted ISO workflow (`.github/workflows/build-iso-hosted.yml`) builds the image in a privileged Debian container, runs `build/verify-iso.sh`, and then runs the headless QEMU boot test. Run `40346119925` on commit `028a2ac` passed both stages and reached SDDM.
 - Signed release builds and full install tests run on a self-hosted runner (`.github/workflows/build-iso.yml`)
 - A full Calamares install-to-disk test is automated (`build/install-test.py`,
-  driven by `.github/workflows/install-test.yml`); it has not produced a green
-  run yet
+  driven by `.github/workflows/install-test.yml`); run `42392182476` completed
+  green at commit `89ed5cf` against the ISO built by run `42296526484`, and the
+  release gate now refuses a tag without such a run
 - Defects found are logged and triaged; critical defects block release

@@ -1,7 +1,11 @@
 # Samurai Developer Environment
 
-> `samurai-editor` is a planned helper and is not included yet. Install editors
-> with `apt` until it exists.
+> **Legacy design document.** The `samurai-editor` helper, the "SSH configured
+> with secure defaults" and the GitHub/GitLab CLI integrations below are not
+> implemented: the image ships `openssh-client` only, with no SSH server and no
+> SSH configuration, and no `gh` or `glab`. See
+> [`../docs/developer-environment.md`](../docs/developer-environment.md) for what
+> ships and what `samurai-profile` adds.
 
 ## Core Tools
 

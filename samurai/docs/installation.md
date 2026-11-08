@@ -18,9 +18,17 @@ Or download the `samurai-linux-iso` artifact from the latest
 **Build ISO (hosted)** run in GitHub Actions. The workflow builds the ISO,
 verifies the live rootfs, and boots it headlessly in QEMU before uploading it.
 
-Artifacts are kept for 7 days, so there is no permanently downloadable ISO yet -
-that is what the first tagged release provides. The last pipeline that passed
-every stage was run `40346119925` (commit `028a2ac`, 2026-10-26):
+Artifacts are kept for 7 days, so a workflow artifact is not a permanent
+download. The first tagged release, `v2026.11`, is: it publishes the image the
+green install test installed, split into parts because GitHub refuses a release
+asset above 2 GiB. Download every part, reassemble with `cat`, check the signed
+checksum, then verify the GPG signature; `REASSEMBLE.txt` in the release repeats
+the commands, and a part on its own is not bootable. See
+[`release-process.md`](release-process.md).
+
+An older reference image, kept only because it is the last pipeline that passed
+every stage before the installer fixes, was run `40346119925` (commit `028a2ac`,
+2026-10-26):
 
 - `samurai-linux-2026.10.26-amd64.iso`
 - 2,547,646,464 bytes (2.37 GiB)
@@ -81,11 +89,14 @@ and splash, SDDM, the live Plasma desktop, the Kuro and Shiro themes
 (`samurai-theme`), and the `samurai-*` CLIs. Booting to SDDM is verified in CI
 (run `41545976827`) and branding is gated by `build/verify-iso.sh`.
 
-What it cannot yet demonstrate anywhere: a **completed** Calamares installation.
-The scripted driver reaches the partition page and no further in CI, so if the
-installer is part of the demo, rehearse it first, in a throwaway VM, and treat
+A **completed** Calamares installation is demonstrated by the automated install
+test, not by a hand-driven VM session: install-test run `42392182476` partitioned
+a blank disk, installed the bootloader, booted the installed system and verified
+it. That is a QEMU guest with no GPU and no network, so if the installer is part
+of a demo on another hypervisor, rehearse it first in a throwaway VM and treat
 the outcome as a result to be recorded rather than a step that is assumed to
-work. The crash-and-recover notes for that are in the Live Session steps above.
+work. The crash-and-recover notes for the live session are in the Live Session
+steps above.
 
 ## Live Session
 
@@ -107,7 +118,10 @@ work. The crash-and-recover notes for that are in the Live Session steps above.
    was added list that session but cannot start it, since the X11 compositor
    was not installed; current builds ship it. This has been seen only in QEMU
    virtual machines so far (see [`known-limitations.md`](known-limitations.md)),
-   not on physical hardware.
+   not on physical hardware. The automated install test does not rely on the
+   session menu: it switches the live session to X11 itself before launching
+   Calamares, so a green run proves the installer on X11, not on the Wayland
+   session the live image starts by default.
 
 ## Installation with Calamares
 
@@ -177,9 +191,9 @@ guidance.
 
 ## Current Limitations
 
-- The ISO builds, passes content verification, and boots to SDDM in CI, and
-  `build/install-test.py` drives the real Calamares installer to a virtual disk,
-  but no automated install run has been green end to end yet. Partitioning,
+- The ISO builds, passes content verification, boots to SDDM in CI, and
+  `build/install-test.py` drives the real Calamares installer to a virtual disk
+  and boots the result; run `42392182476` completed that path green. Partitioning,
   bootloader installation, and first boot on real hardware remain unverified.
 - The bootloader splash and menus use Samurai artwork; the kernel boot logo and
   the installed system's GRUB menu labels still come from Debian's packages.

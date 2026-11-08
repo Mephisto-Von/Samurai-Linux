@@ -272,7 +272,8 @@ cmd_configure() {
 cmd_check_compatibility() {
     local model="${1:-}" params total_mb est_mb verdict
     if [[ -z "$model" ]]; then
-        model=$(get_default_model) || die "Usage: samurai-ai check-compatibility <model-id>"
+        model=$(get_default_model) \
+            || die "Usage: samurai-ai check-compatibility <model-id> (or set a default with: samurai-ai set-default <model-id>)"
     fi
     [[ -r /proc/meminfo ]] || die "Cannot read /proc/meminfo"
     total_mb=$(awk '/^MemTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo)

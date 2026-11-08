@@ -142,16 +142,16 @@ armored detached `.sig` when signing is enabled.
 | Foundation decision | Debian 13 `live-build`, approved as a deviation from the Linux-from-Scratch requirement and recorded in [`samurai/docs/architecture.md`](samurai/docs/architecture.md) |
 | Kuro / Shiro KDE `.colors` schemes | Implemented; 22 wallpapers at 1920x1080 shipped; icons/cursors pending |
 | `samurai-ai` CLI | Implemented and smoke-tested; no AI runtime ships, cloud chat not implemented |
-| `samurai-theme` CLI | Applies real KDE color schemes; the install test's desktop phase checks it against a live Plasma session, and that phase has not produced a green run yet |
+| `samurai-theme` CLI | Applies real KDE color schemes; the install test's desktop phase checks it against a live Plasma session, and run `42392182476` completed that phase green |
 | `samurai-gaming` CLI | Installs `steam-installer`, GameMode, MangoHUD and optional tools; refuses to pretend when `non-free` is off |
-| `samurai-profile` / `samurai-recovery` | Implemented; the install test asserts against them on the installed system, though no install-test run has gone green end to end, and profile installs need network, which the test guest does not have |
-| Security defaults in the image | sudo policy, AppArmor, `unattended-upgrades` for `Debian:trixie-security` and APT pinning ship and are read back off the installed system rather than asserted from package presence. **Those read-backs have now happened on a real installed system**: run `42121878962` installed to disk, booted it and reported nftables, AppArmor and the apt periodic timers all enabled, the running ruleset denying unsolicited inbound traffic, `apparmor profiles: profiles=130 complain=44`, `Allowed-Origins:: "Debian:trixie-security"` and a persistent journald. The live-session firewall history is closed at image level: the load failure had a real cause (kernel/modules split), the build prevents it, `verify-iso.sh` gates it and run `41896746985` read the running ruleset back. The run that produced this evidence still failed later, in the recovery phase, so the read-backs are evidence rather than a green release |
+| `samurai-profile` / `samurai-recovery` | Implemented; the install test asserts against them on the installed system, and run `42392182476` completed that phase green; profile installs need network, which the test guest does not have |
+| Security defaults in the image | sudo policy, AppArmor, `unattended-upgrades` for `Debian:trixie-security` and APT pinning ship and are read back off the installed system rather than asserted from package presence. **Those read-backs have now happened on a real installed system**: run `42121878962` installed to disk, booted it and reported nftables, AppArmor and the apt periodic timers all enabled, the running ruleset denying unsolicited inbound traffic, `apparmor profiles: profiles=130 complain=44`, `Allowed-Origins:: "Debian:trixie-security"` and a persistent journald. The live-session firewall history is closed at image level: the load failure had a real cause (kernel/modules split), the build prevents it, `verify-iso.sh` gates it and run `41896746985` read the running ruleset back. The run that produced this evidence still failed later, in the recovery phase, so the read-backs were evidence rather than a green release; run `42392182476` has since repeated them as part of a green end-to-end run |
 | `live-build` ISO pipeline | Hosted workflow builds a bootable hybrid ISO |
 | CI (ShellCheck + smoke tests) | Passing on GitHub Actions |
 | Bootable ISO boot-tested | QEMU boot to SDDM verified in run `41545976827` (earlier `40346119925`) |
-| Calamares installer | ⚠️ Ships and branded. **Run `42121878962` is the first run to reach the execution page: it started the installation, wrote the disk, booted the installed system and verified its boot loader (`boot/grub/grub.cfg` and `i386-pc/core.img` present, `GRUB_DISTRIBUTOR='Samurai Linux'`, Samurai splash).** It then failed in the recovery phase on an argument-parsing bug in `samurai-recovery restore-etc` — an absolute snapshot path was sorted into the list of files to restore, so `tar` answered `Not found in archive` — which is fixed, tested both ways in `tests/smoke.sh`, and needs a rebuild to reach an installed system. Earlier history, kept because it is what the test now works around: in QEMU the live Plasma **Wayland** compositor (`kwin_wayland`) takes a SIGSEGV when the partition preview mounts targets and Calamares loses its display with it; the image used to offer an X11 session without installing `kwin-x11`; and the live image's `/etc/sddm.conf` is rewritten at boot by `live-config` to `Session=plasma.desktop`, which is the Wayland session — so the install test disables that key, states its own `Session=plasmax11`, and gets `x11=yes` (it no longer has to start the session by hand) |
+| Calamares installer | ✅ Ships and branded. **Run `42392182476` completed the full install-to-disk path: Calamares partitioned a blank disk, wrote it, installed the bootloader, booted the installed system and verified GRUB and the Samurai branding; the desktop phase then verified Plasma, theming and MangoHUD.** Earlier history, kept because it is what the test now works around: in QEMU the live Plasma **Wayland** compositor (`kwin_wayland`) takes a SIGSEGV when the partition preview mounts targets and Calamares loses its display with it; the image used to offer an X11 session without installing `kwin-x11`; and the live image's `/etc/sddm.conf` is rewritten at boot by `live-config` to `Session=plasma.desktop`, which is the Wayland session — so the install test disables that key, states its own `Session=plasmax11`, and gets `x11=yes` (it no longer has to start the session by hand) |
 | Installed-system verification | Drives Calamares over VNC/OCR, boots the disk, checks GRUB, security state, package tooling |
-| Plasma desktop + MangoHUD verification | ⚠️ Automated (`--desktop` phase); not yet green |
+| Plasma desktop + MangoHUD verification | ✅ Automated (`--desktop` phase); green in run `42392182476` |
 | Performance measurement | `build/measure-performance.sh` runs inside the installed desktop session and its report gates the run; no numbers published yet |
 | Signed ISO + release key | Implemented: the build signs ISO, checksum and package manifest, publishes the public key and refuses a key that differs from `samurai/keys/samurai-release.fpr`; install-test verifies the chain |
 | First-boot setup wizard | ❌ Not implemented |
@@ -160,29 +160,25 @@ armored detached `.sig` when signing is enabled.
 
 ### Release status
 
-No tag and no GitHub Release exist yet, and none will be cut until an install
-test is green end to end - a tag is a promise that the ISO installs. That rule
-is now mechanical rather than remembered: `scripts/release-gate.sh` picks the
-newest completed-successful **Install test** run at the commit being released,
-reads out of that run's log which build produced the ISO it installed,
+The first release, [`v2026.11`](https://github.com/Mephisto-Von/Samurai-Linux/releases/tag/v2026.11),
+was published on 2026-11-07. It supersedes the earlier `v0.0.1` release, which
+was tagged before the installer fixes and was not boot-tested. The release is
+the image built by run `42296526484` from commit `d865e89`; the tag points at
+`89ed5cf`, which adds only the install-harness and release-gate changes that
+made the test pass and the split publication possible.
+
+The release rule is mechanical rather than remembered: `scripts/release-gate.sh`
+picks the newest completed-successful **Install test** run at the commit being
+released, reads out of that run's log which build produced the ISO it installed,
 authenticates that artifact against `samurai/keys/`, and refuses anything else;
 `.github/workflows/release.yml` runs it and publishes only on a human dispatch
-with `dry_run` turned off. Two things stand between a green run and a published
-release. The first is the obvious one: there are no green runs. The second is a
-size limit nobody had checked - the `samurai-linux-iso` artifact of run
-`42105485811` is 2.74 GiB and GitHub refuses a release asset above 2 GiB, so the
-image has to shrink or the release has to live somewhere else, and that is a
-decision rather than a detail. The gate reports the number instead of silently
-failing at publish time.
-The last pipeline that was green end to end is
-[Build ISO (hosted) run `40346119925`](https://github.com/Mephisto-Von/Samurai-Linux/actions/runs/40346119925)
-(commit `028a2ac`, 2026-10-26) — it predates every installer fix since. Later
-runs built the ISO successfully but failed in the install test, so the newest
-ISO an install test has been driven against is from run `41802792291`; run
-`42105485811` is the first image carrying the `kwin-x11` fix, and the install
-tests dispatched against that artifact are the ones that first completed an
-installation and read the installed system back (`42121878962`). None of them
-finished green, so there is still nothing to tag.
+with `dry_run` turned off. The green run is
+[`42392182476`](https://github.com/Mephisto-Von/Samurai-Linux/actions/runs/42392182476).
+
+The image is 2.9 GB and GitHub refuses a release asset above 2 GiB, so the
+release publishes it in parts: download every part, reassemble with `cat`,
+check the signed checksum, then verify the GPG signature. `REASSEMBLE.txt` in
+the release repeats the commands; a part on its own is not bootable.
 
 `RELEASE_DESCRIPTION.md` is retained as a historical build log. Its commands are
 superseded by `build/README.md`, and the claims it made that were never measured

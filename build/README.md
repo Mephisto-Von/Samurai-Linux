@@ -236,59 +236,35 @@ the same name, so keep an offline backup of `.tools/samurai-signing-key.asc`,
 
 ### Current state
 
-No install-test run has been green end to end yet, so there is no tag and no
-published release. Each dispatch has reached further than the previous one - the
-failures have moved from the live session, to partitioning, to the bootloader, to
-the sudo prompt on the installed system, and the last few stopped before the
-installer even ran: `build/verify-iso.sh` refused to publish an image whose
-shipped APT sources configured no Debian security archive, which would have
-made every automatic-update claim inert (runs 41447034423 and 41452920694). The
-pocket now ships as
-`build/config/includes.chroot/etc/apt/sources.list.d/samurai-security.list`
-rather than being requested from live-build, whose own `sources.list` is rewritten
-around the squashfs packing - see `build/auto/config`, and run 41514577159 proved
-the image really carries it. That same run then failed inside the new permission
-check, not in the image: it asked `unsquashfs` for a `-lm` listing, which is not
-an option it knows, and `unsquashfs` reports an unknown option by printing its
-usage to stdout and exiting 1 - so the check died with nothing on stderr. It lists
-with `-ll -dest .` now, the sudoers expectation matches the 0440 the security hook
-sets, and `/usr/local/bin` and its tools are chowned to root, because live-build
-copies them with the owner of the checkout (uid 1001 in a hosted build). Two more
-runs (41520207923, 41528368817) then died in the manifest check, which was written
-as `if awk 'END { exit bad }'` and so rejected a well formed manifest while
-accepting a broken one; the validator is `build/check-manifest.sh` now, with both
-directions pinned by a smoke check. Run 41539298221 got further than any build has:
-every `verify-iso.sh` gate passed on a real image and the QEMU boot test passed, and
-it failed in `Sign the ISO` after producing three good signatures - the fingerprint
-export asked gpg for `--fingerprints`, which GnuPG 2.5 removed. The signing step now
-reads the fingerprint from `gpg --batch --with-colons --list-keys`, and a smoke
-check runs that same pipeline against `samurai/keys/samurai-release.asc`. Because
-signing failed the ISO artifact was not uploaded, so the install test was skipped
-and still has no green run. The two blockers since then were both found: the live
-image booted a kernel whose modules tree was not in the squashfs, which left the
-QEMU USB tablet without `usbhid` and made every VNC click land nowhere, and that is
-now fixed and gated - the wizard reaches `install started`. What blocked the
-next step turned out not to be Calamares at all: the job-2 segfault was the live
-Plasma **Wayland** compositor taking a SIGSEGV in `libkwin.so.6` while the
-partition preview mounted targets, and Xwayland and Calamares died with it - the
-driver now dumps `coredumpctl info` frames with the failure so the victim is
-named rather than guessed. The test switches the live session to X11, which
-exposed a third defect: the image offered an X11 session at login without
-installing `kwin-x11`, so that session had no compositor to start. The package
-is in the manifest now and `verify-iso.sh` refuses any image that offers a
-session whose compositor is missing. Switching to that session then produced an
-Xorg with no desktop on it: run `42112234958` reads as the reason - SDDM ignored
-the test's `[Autologin] Session=` drop-in, started the Wayland session anyway,
-and when it exited ten seconds later SDDM put a display on VT3 for its own
-greeter. The test now disables the image's own `Session=` keys, states its
-request in a drop-in that sorts last, and falls back to starting the session
-file's `Exec=` itself after killing the greeter. No run has yet reached the
-execution page, so installation and first boot remain untested end to end. The suite
-also reads back the installed security state, exercises `samurai-profile` and
-`samurai-recovery` on the installed system, and runs
-`build/measure-performance.sh` inside a live Plasma session when `--desktop` is
-used. Manual verification on real hardware, including a Secure Boot machine and
-an encrypted install, is still required before release.
+Install-test run `42392182476` completed green at commit `89ed5cf` against the
+ISO built by run `42296526484` (commit `d865e89`). It partitioned a blank disk,
+installed the bootloader, booted the installed system, read the security state
+back, exercised `samurai-profile` and `samurai-recovery`, and verified the
+Plasma desktop and the MangoHUD/GameMode packages. That image is published as
+`v2026.11`.
+
+The path to that run fixed real image defects, and each is now gated:
+
+- the live kernel's modules tree was missing from the squashfs, which left the
+  QEMU USB tablet without `usbhid` and made every VNC click land nowhere;
+- the live Plasma **Wayland** compositor took a SIGSEGV in `libkwin.so.6` while
+  Calamares painted its partition preview, so the test switches the live
+  session to X11;
+- the image offered an X11 session without installing `kwin-x11`, so that
+  session had no compositor - `verify-iso.sh` now refuses any image that offers
+  a session whose compositor is missing;
+- SDDM ignored the test's `Session=` drop-in because the live image's own
+  `/etc/sddm.conf` wins, so the test disables every `Session=` key, states its
+  request in a drop-in that sorts last, and falls back to the session file's
+  `Exec=` itself;
+- Calamares' welcome page owns keyboard focus in its language combo, so the
+  old `Alt+N` fallback selected "norsk bokmål" instead of advancing; the
+  harness now clicks the primary button by window geometry when OCR cannot
+  read it.
+
+What remains manual: partitioning on real hardware, LUKS, UEFI and Secure Boot
+on physical machines, and an actual Proton title with the overlay visible (no
+GPU in QEMU).
 
 ## What the ISO contains
 

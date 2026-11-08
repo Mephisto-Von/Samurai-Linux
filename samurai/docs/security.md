@@ -11,13 +11,13 @@ it were missing or malformed, but no installed-system check reads it yet.
 | --- | --- | --- |
 | Non-root daily account, admin through `%sudo` | tested | the harness logs in as `samurai`, and `sudo -i` needs the user's password |
 | No passwordless sudo on an installed system | tested | `grep -rEl '^[^#]*NOPASSWD' /etc/sudoers /etc/sudoers.d/` must find nothing |
-| sudo behaviour (`env_reset`, 5-minute ticket, 3 tries) | implemented | `visudo -c` in `0120-security.hook.chroot`, and the image has to record the drop-in as `0440 root/root` or the build fails; `install-test.py` requires the installed system to report the same mode, which no CI install has reached yet |
+| sudo behaviour (`env_reset`, 5-minute ticket, 3 tries) | tested | `visudo -c` in `0120-security.hook.chroot`, and the image has to record the drop-in as `0440 root/root` or the build fails; `install-test.py` requires the installed system to report the same mode, which run `42392182476` did |
 | Shipped tools in `/usr/local/bin` are root-owned | implemented | `0120-security.hook.chroot` chowns the directory and every `samurai-*` tool to `root:root 0755`; `verify-iso.sh` reads owner and mode out of the squashfs metadata and fails on anything else |
-| Default-deny inbound firewall (IPv4 **and** IPv6) | **live session verified; installed system not yet** | the ruleset ships and `verify-iso.sh` checks its mode. Install-test run 41596964514 once booted the live session with `nftables.service` failing (`status=3/NOTIMPLEMENTED`), because the ISO ran `6.12.115+deb13.1` while the image's `/lib/modules` held only `6.12.107+deb13` - live-build upgrades the chroot *after* `binary_rootfs` writes the squashfs, so no module could load at all. The build now applies security updates in the chroot stage and `verify-iso.sh` matches `/live/vmlinuz` by content to a kernel present in the squashfs, which run 41802792291 passed (`the ISO boots 6.12.115+deb13.1-amd64: the live rootfs holds 5189 of its files, including usr/lib/modules/6.12.115+deb13.1-amd64/kernel/net/netfilter/nf_tables.ko.xz`). Run 41896746985 then read the control back from the running live session: `uname -r` `6.12.115+deb13.1-amd64`, `modprobe nf_tables` exit 0, `nftables.service` `ExecStart=/usr/sbin/nft -f /etc/nftables.conf` `status=0/SUCCESS`, and `nft list ruleset` reporting `table inet samurai { chain ingress { type filter hook input priority filter; policy drop; ct state established,related accept; ct state invalid drop` - one `inet` table, so both families are filtered. Still open: the same read-back on an **installed** system, which no install-test run has reached because Calamares dies in its partition module |
+| Default-deny inbound firewall (IPv4 **and** IPv6) | tested | the ruleset ships and `verify-iso.sh` checks its mode; run `42392182476` read `chain ingress ... policy drop` back from the *running* ruleset on the installed system. Install-test run 41596964514 once booted the live session with `nftables.service` failing (`status=3/NOTIMPLEMENTED`), because the ISO ran `6.12.115+deb13.1` while the image's `/lib/modules` held only `6.12.107+deb13` - live-build upgrades the chroot *after* `binary_rootfs` writes the squashfs, so no module could load at all. The build now applies security updates in the chroot stage and `verify-iso.sh` matches `/live/vmlinuz` by content to a kernel present in the squashfs, which run 41802792291 passed (`the ISO boots 6.12.115+deb13.1-amd64: the live rootfs holds 5189 of its files, including usr/lib/modules/6.12.115+deb13.1-amd64/kernel/net/netfilter/nf_tables.ko.xz`). Run 41896746985 then read the control back from the running live session: `uname -r` `6.12.115+deb13.1-amd64`, `modprobe nf_tables` exit 0, `nftables.service` `ExecStart=/usr/sbin/nft -f /etc/nftables.conf` `status=0/SUCCESS`, and `nft list ruleset` reporting `table inet samurai { chain ingress { type filter hook input priority filter; policy drop; ct state established,related accept; ct state invalid drop` - one `inet` table, so both families are filtered. The same read-back on an **installed** system is now part of the green run `42392182476` |
 | Mandatory access control (AppArmor) | partly tested | kernel parameter must be `Y` and at least one profile must be loaded; enforce/complain counts are recorded, not asserted |
 | Automatic security upgrades | tested | `APT::Periodic::Unattended-Upgrade` must be `"1"`, both apt timers must be `enabled`, the package `unattended-upgrades` must be installed, and the effective `Allowed-Origins` must name `Debian:trixie-security` |
 | Authenticated package sources | tested at build time, configured at install time | `0120-security.hook.chroot` aborts the build unless `apt-get update` authenticates a `trixie-security` archive *and* that archive's own `Origin:` field matches the origin `20samurai-security` names; the installed system must still configure the pocket, which it does from the shipped `/etc/apt/sources.list.d/samurai-security.list` (`verify-iso.sh` fails the build if the image carries no security source, or carries the same one twice) |
-| APT pinning that keeps security preferred | implemented | `99samurai` ships in the image; the installed system's `apt-cache policy` priorities are not yet asserted |
+| APT pinning that keeps security preferred | implemented | `99samurai` ships in the image; the installed system's `apt-cache policy` priorities are not asserted, because the test guest has no network and therefore no downloaded index to report priorities from |
 | Persistent system journal | tested | `/var/log/journal` must exist after first boot, which only happens if `Storage=persistent` was read |
 | Release artifact integrity | tested at consumption | the build signs the ISO, its checksum and the package manifest and verifies each signature as it writes it; `install-test.yml` re-imports the key from `samurai/keys/`, checks it against the committed fingerprint and verifies all three - that step has passed on runs 41545976827 and 41596964514 |
 | Rollback / recovery after a failed update | partly tested | `samurai-recovery snapshot`, `verify` and `restore-etc` run on the installed system in CI; restoring a *package* set needs a networked guest, and this is not a filesystem snapshot - see `known-limitations.md` |
@@ -30,7 +30,8 @@ it were missing or malformed, but no installed-system check reads it yet.
 `/etc/nftables.conf` implements the policy: drop unsolicited inbound, allow
 outbound, accept what the conntracker recognises as a reply to something we
 started, and keep the protocols a machine cannot configure itself without
-(DHCPv4, DHCPv6, IPv6 neighbour/router discovery, rate-limited ICMP echo).
+(DHCPv4, DHCPv6, IPv6 neighbour/router discovery, rate-limited IPv4 ICMP echo -
+ICMPv6 echo requests are not accepted).
 Dropped packets are logged at ten per minute with the prefix `samurai-drop: `.
 
 The default is deliberately the *workstation* default: a developer machine
@@ -144,7 +145,9 @@ per-machine decision the project cannot verify for them.
 
 ## Reporting issues
 
-Report suspected vulnerabilities to the maintainers privately before public
-disclosure. Critical defects block a release until they are fixed or explicitly
-waived in writing (see `release-process.md`). A security contact address and an
-advisory process are outstanding (§5 checklist above).
+There is no security contact address, advisory feed or private reporting
+channel yet, which is why "Vulnerability intake and patch process" is listed as
+incomplete above. Until one exists, do not treat this repository's public issue
+tracker as a private channel. A critical defect found here still blocks a
+release until it is fixed or explicitly waived in writing (see
+`release-process.md`).

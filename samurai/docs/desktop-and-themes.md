@@ -111,8 +111,12 @@ The generated files are committed, so ISO builds do not need Pillow.
 - **Auto mode** - `samurai-theme auto` switches at 06:00 and 18:00
 - **Persistent auto mode** - `samurai-theme install-auto` installs a systemd user timer
 - **Wallpapers** - Samurai art collection (22 pieces) from the project, auto-applied per theme or manually selectable
-- **Contrast testing** - palette values target WCAG AA for body text
-- **Focus states** - crimson/gold focus indicators defined in both schemes
+- **Contrast targets** - palette values are chosen for WCAG AA body text, but
+  no contrast ratio has been measured; see
+  [`testing.md`](testing.md) for what the automated suite does and does not
+  assert
+- **Focus states** - crimson/gold focus indicators defined in both schemes, not
+  yet checked for visibility
 - **Application behavior** - still needs testing against real KDE applications
 
 ## Installation Artwork

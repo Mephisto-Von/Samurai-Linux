@@ -304,6 +304,21 @@ awk '{ ts = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9] "
 }' "$TMP_DIR/squashfs-listing.txt" > "$TMP_DIR/squashfs-modes.tsv"
 [[ -s "$TMP_DIR/squashfs-modes.tsv" ]] || die "the squashfs listing contains no file records"
 
+# build.sh copies samurai/themes/ into the image wholesale (`cp -a`), so a file
+# left beside a theme ships on every installed system. tests/smoke.sh pins the
+# source tree; this reads the same rule off the built image, because a stale copy
+# left in config/includes.chroot is invisible from the repository and would
+# otherwise only be found by someone browsing /usr/share/samurai/themes.
+theme_strays=$(awk -F'\t' '$1 ~ /^-/ && $3 ~ /^usr\/share\/samurai\/themes\// {
+    split($3, part, "/")
+    if (part[6] == "") next
+    theme = part[5]
+    if (part[6] != "colors.css" && part[6] != "samurai-" theme ".colors")
+        print $3
+}' "$TMP_DIR/squashfs-modes.tsv")
+[[ -z "$theme_strays" ]] \
+    || die "the image ships unexpected files under /usr/share/samurai/themes:"$'\n'"$theme_strays"
+
 live_kernel_hash=$(sha256sum "$TMP_DIR/vmlinuz" | cut -d' ' -f1)
 live_kernel_size=$(stat -c %s "$TMP_DIR/vmlinuz")
 printf '==> /live/vmlinuz is %s bytes, sha256 %s\n' "$live_kernel_size" "$live_kernel_hash"

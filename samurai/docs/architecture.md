@@ -277,18 +277,18 @@ What it costs, and what is therefore recorded as a known limitation:
 
 ## Required Project Documentation
 - README.md
-- docs/architecture.md
-- docs/build-guide.md
-- docs/security.md
-- docs/ai-system.md
-- docs/developer-environment.md
-- docs/gaming.md
-- docs/performance.md
-- docs/desktop-and-themes.md
-- docs/installation.md
-- docs/testing.md
-- docs/release-process.md
-- docs/known-limitations.md
+- samurai/docs/architecture.md
+- samurai/docs/build-guide.md
+- samurai/docs/security.md
+- samurai/docs/ai-system.md
+- samurai/docs/developer-environment.md
+- samurai/docs/gaming.md
+- samurai/docs/performance.md
+- samurai/docs/desktop-and-themes.md
+- samurai/docs/installation.md
+- samurai/docs/testing.md
+- samurai/docs/release-process.md
+- samurai/docs/known-limitations.md
 
 ## Release Acceptance Criteria
 - Bootable ISO generated and validated

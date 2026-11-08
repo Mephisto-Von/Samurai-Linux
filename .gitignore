@@ -57,6 +57,10 @@ ref/
 /utils/
 /docs/
 
+# Source art archive: the JPEGs it contains are already tracked in "Samurai Walls/",
+# and nothing in the build reads the zip.
+/Samurai Walls.zip
+
 # Python
 __pycache__/
 *.pyc

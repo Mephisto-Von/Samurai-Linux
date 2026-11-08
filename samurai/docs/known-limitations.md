@@ -5,26 +5,30 @@
   the ISO on an ephemeral GitHub runner inside a privileged Debian trixie
   container. Local builds still require a Linux host with 50 GB+ free disk (100
   GB recommended), 4 GB+ RAM (8 GB recommended), and root for `chroot`.
-- **The scripted installer test has not passed yet** - `build/install-test.py`
-  drives the real Calamares UI in QEMU, boots the written disk, and now also
-  boots into Plasma to check theming and GameMode/MangoHud. The ISO builds and
-  boots to SDDM in CI, but no install-test run has been green end to end, so
-  partitioning, bootloader installation, and first boot on real hardware are
-  still unverified. The furthest a run has got is Calamares passing every
-  mandatory requirement check (storage, RAM, root, partitions) and building its
-  partition job queue - run 41989352435, which then lost the display server; no
-  run has reached the execution page where jobs write to disk. See
+- **The scripted installer test is green in CI, not yet on hardware** -
+  `build/install-test.py` drives the real Calamares UI in QEMU, boots the
+  written disk, and also boots into Plasma to check theming and
+  GameMode/MangoHud. Install-test run `42392182476` completed green at commit
+  `89ed5cf` against the ISO built by run `42296526484` (commit `d865e89`): it
+  partitioned a blank disk, installed the bootloader, booted the installed
+  system, read the security state back, and verified the Plasma desktop. That
+  is a virtual machine with no GPU, no guest network and one disk;
+  partitioning on real hardware, encrypted installs, Secure Boot and first
+  boot on physical machines remain manual checks. See
   [`../../build/README.md`](../../build/README.md).
-- **No release tag or GitHub Release yet** - signing works and is proved in CI
-  (the ISO, its checksum and the package manifest are signed, and the install
-  test verifies them against the key committed under `samurai/keys/`), but no
-  tag will be pushed until an install-test run is green end to end.
+- **The first release is `v2026.11`** - the ISO, its checksum and the package
+  manifest are signed, and the install test verifies them against the key
+  committed under `samurai/keys/`. `scripts/release-gate.sh` refuses a tag
+  without a green install test at that commit. The image is 2.9 GB, so GitHub
+  publishes it in parts with `REASSEMBLE.txt`; a part on its own is not
+  bootable. See [`release-process.md`](release-process.md).
 - **Boot menu and splash are Samurai, the kernel boot logo is not** - the
   isolinux and GRUB menus use the Samurai title, entry labels, selection colour
   and splash images, but the Debian logo drawn by the live kernel and the GRUB
   labels on an installed system still come from Debian's packages.
-- **No first-boot wizard** - the installed system boots to SDDM; theme, AI, and
-  gaming setup are manual commands after login.
+- **No first-boot wizard** - the installed system boots to SDDM. The autostart
+  entry applies the Kuro scheme and its wallpaper, but AI and gaming setup are
+  manual commands after login.
 - **Secure Boot is not supported at all** - the image installs
   `grub-efi-amd64-bin`, which produces an unsigned EFI binary, and no `shim`
   package is present, so neither the live ISO nor the installed system boots with
@@ -76,7 +80,9 @@
   work; nothing in this project sets one up and no test touches one.
 - **Anti-cheat limitations** - some titles (kernel-level anti-cheat) do not
   work under Proton regardless of configuration
-- **NVIDIA drivers manual** - NVIDIA setup is documented but not auto-configured
+- **NVIDIA drivers manual** - enabling Debian's `non-free` archive and installing
+  `nvidia-driver` is documented in [`gaming.md`](gaming.md) but nothing detects
+  the GPU or configures it, and no NVIDIA system has been tested
 - **Not all Windows games work** - Proton compatibility varies by title;
   check ProtonDB before expecting a given game to run
 - **Overclocking excluded** - risky performance tweaks are optional and not
@@ -84,10 +90,13 @@
 
 ## Performance
 - **No published numbers** - the boot time, idle memory and CPU figures this file
-  used to imply were never measured, and the ones in `docs/performance.md`'s
-  predecessors have been removed. `build/measure-performance.sh` is now the only
-  source, and it runs inside the install test's desktop phase; until a green run
-  attaches a `performance.txt`, nothing may be quoted.
+  used to imply were never measured, and the ones in earlier revisions of
+  [`performance.md`](performance.md) have been removed.
+  `build/measure-performance.sh` is now the only source, and it runs inside the
+  install test's desktop phase, so a green run
+  carries a `performance.txt` (run `42392182476` did). Those numbers describe a
+  QEMU guest with no GPU, so they are not a baseline for real hardware and are
+  not quoted in the documentation.
 - **No power profiles** - neither `power-profiles-daemon` nor TLP is in the image,
   so the balanced / performance / power-saving modes described in the brief do not
   exist. Nothing switches CPU governor or scheduler policy.
