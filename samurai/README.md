@@ -26,7 +26,7 @@ Developer OS with AI integration, gaming support, and secure defaults.
 - [Performance](docs/performance.md)
 - [Desktop & Themes](docs/desktop-and-themes.md)
 - [Customization Hub](docs/customization-hub.md) (with a `kcm_samurai` module in System Settings -> Personalization)
-- [Customization Hub](docs/customization-hub.md) (with a `kcm_samurai` module in System Settings -> Personalization)
+- [Comparison against the reference ISOs](docs/comparison-ref-isos.md)
 - [Installation](docs/installation.md)
 - [Testing](docs/testing.md)
 - [Release Process](docs/release-process.md)
