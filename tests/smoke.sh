@@ -1177,4 +1177,37 @@ if [[ "$kcm_ok" == "true" ]]; then
 fi
 ok "the System Settings KCM sources, build step and ISO gate agree"
 
+# The wallpapers' committed 4K files are only as good as the pipeline that
+# produced them. Without a model the neural step is silently skipped, and a
+# plain resize of a 236-760 px thumbnail is the thing the finish pass exists
+# to hide. Guard the contract that can be checked without a model: every name
+# make-wallpapers.py expects must be exactly what upscale-nn.py would emit for
+# the committed source, and the upscaler must actually be wired into docs.
+upscale_problems=$(python3 - "$REPO_ROOT" <<'PY'
+import sys, importlib.util
+from pathlib import Path
+root = Path(sys.argv[1])
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+make_wallpapers = load("make_wallpapers", root / "build" / "make-wallpapers.py")
+nn = load("upscale_nn", root / "build" / "upscale-nn.py")
+problems = []
+expected = {source for source, _ in make_wallpapers.MAPPING} | {make_wallpapers.SLIDE_SOURCE}
+actual = {path.name for path in nn.iter_sources(root / "Samurai Walls")}
+if expected != actual:
+    problems.append(f"the upscaler would not cover the expected names (missing {sorted(expected - actual)}, extra {sorted(actual - expected)})")
+if any(Path(path).is_absolute() or ".." in Path(path).parts for path in expected):
+    problems.append("a wallpaper source name is not a plain file name")
+print("\n".join(problems))
+sys.exit(1 if problems else 0)
+PY
+)
+if [[ -n "$upscale_problems" ]]; then
+    fail "the wallpaper upscaler does not cover the generator's names: $upscale_problems"
+fi
+ok "the neural wallpaper upscaler covers every source the generator expects"
+
 printf '\nAll %d smoke checks passed.\n' "$pass"

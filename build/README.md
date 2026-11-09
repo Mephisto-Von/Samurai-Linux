@@ -314,6 +314,7 @@ GPU in QEMU).
 | `samurai/desktop/` | The Customization Hub: Qt window, presets, data, launcher entry |
 | `Samurai Walls/` | Source art for the wallpapers and installer slide |
 | `build/make-wallpapers.py` | Generates 3840x2160 wallpapers + the Calamares slide from that art |
+| `build/upscale-nn.py` | Neurally upscales the thumbnails 4x first (Real-ESRGAN animevideo-v3 via ONNX Runtime); the upscaled intermediates are not committed |
 | `samurai/kcm/` | The System Settings entry: `kcm_samurai`, a compiled KF6 KCM that opens the Hub (`build/build.sh` builds it with CMake) |
 
 The generated copies under `build/config/includes.chroot/usr/local/bin/` and `.../usr/share/samurai/themes/` are ignored by Git; `build.sh` recreates them on every run. The generated wallpapers under `.../usr/share/backgrounds/samurai/` and `.../etc/calamares/branding/samurai/slide1.png` **are** committed, so ISO builds do not need Pillow; rerun `python3 build/make-wallpapers.py` after changing the source art.

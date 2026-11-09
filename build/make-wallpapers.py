@@ -9,17 +9,18 @@ systems installed from it, plus the 800x400 Calamares welcome slide:
   * portrait sources are placed, fit to full height, over a blurred copy of
     themselves so the art is never distorted or awkwardly cropped,
   * every frame is finished with an unsharp pass, a little film grain and a
-    vignette. The art is much smaller than 4K, so a plain Lanczos resize reads
-    as a soft, blown-up thumbnail; sharpening plus grain lets the softening
-    read as depth of field instead, and the grain hides JPEG banding in the
-    large flat skies,
+    vignette. The committed set is produced from the neural 4x upscalings in
+    ``.tmp/upscaled`` (see ``build/upscale-nn.py``), which redrew the line
+    work; the finish pass camouflages what remains of the stretch and the
+    grain hides JPEG banding in the large flat skies,
   * the Kuro (dark) and Shiro (light) themes each get a stable default
     wallpaper name that ``samurai-theme`` applies: kuro.jpg / shiro.jpg.
 
 Outputs are committed to the repository, so ISO builds do not need Pillow.
 Regenerate with:
 
-    python3 build/make-wallpapers.py
+    python3 build/upscale-nn.py --out .tmp/upscaled   # needs onnxruntime + the model
+    python3 build/make-wallpapers.py --source .tmp/upscaled
 
 Requires Pillow (``pip install pillow``).
 """

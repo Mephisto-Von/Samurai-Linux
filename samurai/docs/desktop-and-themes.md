@@ -85,9 +85,12 @@ and activated with `plasma-apply-colorscheme samurai-shiro`.
 
 The image ships 22 wallpapers at 3840x2160 in `/usr/share/backgrounds/samurai/`,
 generated from the Samurai art collection with `build/make-wallpapers.py`. The
-source art is small (236-760 px wide), so the generator upscales it deliberately
-and finishes each frame with a sharpen pass, fine grain and a vignette; a plain
-resize reads as a blown-up thumbnail, this reads as depth of field:
+The thumbnails are 236-760 px wide, so there is no high-resolution source
+in the repo. The committed set is produced by first upscaling every
+thumbnail with a neural model (`build/upscale-nn.py`, Real-ESRGAN
+animevideo-v3, 4x), which redraws the line work instead of interpolating
+it, and then finishing each frame with a sharpen pass, fine grain and a
+vignette:
 
 - `kuro.jpg` and `shiro.jpg` are the theme defaults. `samurai-theme` applies
   the one matching the selected theme with `plasma-apply-wallpaperimage`, and
@@ -95,7 +98,8 @@ resize reads as a blown-up thumbnail, this reads as depth of field:
   live session and freshly installed systems both start with Kuro colors and
   the moonlit wallpaper.
 - Portrait sources are placed, fit to full height, over a blurred copy of
-  themselves; landscape sources are scaled and centre-cropped to 3840x2160, so
+  themselves; landscape sources are scaled and centre-cropped to
+  3840x2160, so
   nothing is distorted.
 - The other 20 wallpapers (`crimson-moon.jpg`, `moonlit-tree.jpg`, ...) are
   available in the Plasma wallpaper picker.

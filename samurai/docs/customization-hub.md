@@ -80,7 +80,8 @@ palette is written to `~/.local/share/color-schemes/`.
 ## Wallpapers
 
 All 22 wallpapers are 3840x2160, generated from the project art by
-`build/make-wallpapers.py`. They appear in a gallery with real previews,
+`build/make-wallpapers.py` after a neural 4x upscale of the thumbnails
+(see `build/upscale-nn.py`). They appear in a gallery with real previews,
 categorised (Characters, Crimson, Icons, Landscapes, Neon), with favourites,
 double-click for a full-screen preview, one-click selection and your own
 pictures: **Add image…**, or

@@ -119,10 +119,13 @@
   through this window was not, because the build and test machines have no
   Plasma session. The tools it calls are the ones `samurai-theme` already uses
   in a green install test
-- **The 4K wallpapers are authored, not captured at 4K** - the source art is
-  236-760 px wide, so the 3840x2160 files are a deliberate upscale (sharpen,
-  film grain, vignette, and a blurred bleed behind portrait art). They are
-  crisp at desktop size, not detail that was never in the source
+- **The 4K wallpapers are regenerated, not captured at 4K** - the thumbnails
+  in `Samurai Walls/` are 236-760 px wide; a neural 4x upscale
+  (`build/upscale-nn.py`) synthesises line work and texture, and the
+  generator then finishes each frame. What looks like detail is the
+  model's interpretation, not recovered pixels - which is visible
+  if you compare the gallery against the thumbnails, and is why the
+  upscaled intermediates are not committed
 - **Icons and cursors are pending** - the Kuro/Shiro color schemes and 22
   Samurai wallpapers ship with the image, but the custom icon set and cursors
   are still planned
