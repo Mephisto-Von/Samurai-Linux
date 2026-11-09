@@ -155,7 +155,10 @@ session; it does not prove both palettes. What it asserts today:
 - the System Settings module (`tests/smoke.sh`): the `samurai/kcm/` sources
   hang together (CMake macro, plugin metadata, QML), `build/build.sh`
   builds it and `build/verify-iso.sh` asserts the plugin and its generated
-  service file are in the image
+  service file are in the image; the Hub's offline custom-theme path
+  (`--apply-custom-theme`) writes a valid `samurai-custom-<theme>` scheme
+  even with no Plasma session, so the page's colour controls have a
+  backend that is exercised here
 
 Not automated yet, and therefore not claimed:
 

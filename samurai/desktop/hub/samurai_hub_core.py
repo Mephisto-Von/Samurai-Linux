@@ -1172,6 +1172,9 @@ With no option the Hub window opens.
   --apply-theme      Apply a built-in theme (colours + its wallpaper) as the
                      Hub would, on the session bus the caller is in
   --apply-wallpaper  Apply one installed wallpaper by name
+  --apply-custom-theme
+                     Save a theme with overridden colours (role=#RRGGBB
+                     pairs) and apply it, as the System Settings page does
   --list-presets     Print the built-in themes
   --list-wallpapers  Print the installed wallpapers
   --verify           Check that the installed data files are consistent
@@ -1213,6 +1216,49 @@ def apply_preset(paths: Paths, slug: str) -> tuple[bool, list[str]]:
     return True, notes
 
 
+def apply_custom_theme(
+    paths: Paths, slug: str, overrides: dict[str, str]
+) -> tuple[bool, list[str]]:
+    """Save a preset with some colours changed, then apply it (no window).
+
+    This is the code path the System Settings page drives, so a colour change
+    gets exactly the same treatment as the same change made in the Hub window:
+    the scheme is rendered, validated, written to the user's own
+    ``color-schemes`` directory and applied. Writing the file first means the
+    change is still there if Plasma is not running yet.
+    """
+    notes: list[str] = []
+    presets = load_presets(paths)
+    try:
+        preset = load_preset(slug, presets)
+    except KeyError:
+        return False, [f"no theme called {slug!r}; have: " + ", ".join(p.slug for p in presets)]
+    palette = preset.palette
+    for role, value in overrides.items():
+        try:
+            palette = palette.with_role(role, value)
+        except (KeyError, ValueError) as error:
+            return False, [f"{preset.slug}: {error}"]
+    scheme_id = f"samurai-custom-{preset.slug}"
+    text = render_scheme(scheme_id, f"Samurai {preset.name} (custom)", palette)
+    problems = scheme_problems(text, scheme_id)
+    if problems:
+        return False, [f"{scheme_id}: {problem}" for problem in problems]
+    target = write_user_scheme(paths, scheme_id, text)
+    notes.append(f"wrote {target}")
+    ok, message = apply_scheme(scheme_id)
+    notes.append(f"scheme {scheme_id}: {message}")
+    if not ok:
+        return False, notes
+    state = load_state(paths)
+    state["custom_scheme"] = scheme_id
+    state["custom_palette"] = palette.as_dict()
+    state["custom_name"] = preset.name + " (custom)"
+    state["preset"] = preset.slug
+    save_state(paths, state)
+    return True, notes
+
+
 def main(argv: list[str]) -> int:
     paths = core_paths()
     args = list(argv)
@@ -1233,7 +1279,7 @@ def main(argv: list[str]) -> int:
         return 0 if ok else 1
     if "--verify" in args:
         return verify(paths)
-    for flag in ("--apply-theme", "--apply-wallpaper"):
+    for flag in ("--apply-theme", "--apply-wallpaper", "--apply-custom-theme"):
         if flag not in args:
             continue
         index = args.index(flag)
@@ -1243,6 +1289,21 @@ def main(argv: list[str]) -> int:
             return 2
         if flag == "--apply-theme":
             ok, notes = apply_preset(paths, value)
+            print("\n".join(notes))
+            return 0 if ok else 1
+        if flag == "--apply-custom-theme":
+            overrides: dict[str, str] = {}
+            for item in args[index + 2 :]:
+                if item.startswith("--"):
+                    break
+                role, sep, colour = item.partition("=")
+                if not sep or not is_hex(colour):
+                    print(f"--apply-custom-theme: {item!r} is not role=#RRGGBB", file=sys.stderr)
+                    return 2
+                overrides[role] = colour
+            ok, notes = apply_custom_theme(paths, value, overrides)
+            print("\n".join(notes))
+            return 0 if ok else 1
         else:
             wallpaper = find_wallpaper(paths, value)
             if wallpaper is None:

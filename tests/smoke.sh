@@ -1164,6 +1164,49 @@ if [[ "$kcm_ok" == "true" ]]; then
         || fail "the KCM C++ does not derive from KQuickConfigModule"
     grep -q 'kcm.openHub' "$KCM/src/ui/main.qml" \
         || fail "the KCM page does not open the Hub"
+    grep -q 'applyCustomColors' "$KCM/src/kcm_samurai.h" \
+        || fail "the KCM cannot apply custom colours"
+    grep -q 'themesJson' "$KCM/src/kcm_samurai.h" \
+        || fail "the KCM does not expose the Hub's themes to QML"
+    grep -q 'kcm.applyCustomColors' "$KCM/src/ui/main.qml" \
+        || fail "the KCM page has no way to apply custom colours"
+    grep -q 'ColorDialog' "$KCM/src/ui/main.qml" \
+        || fail "the KCM page has no colour picker"
+    grep -q 'JSON.parse(kcm.themesJson())' "$KCM/src/ui/main.qml" \
+        || fail "the KCM page does not load the Hub's themes into its picker"
+    grep -q '\-\-apply-custom-theme' "$REPO_ROOT/samurai/desktop/hub/samurai_hub_core.py" \
+        || fail "the core cannot save and apply a custom theme, so the KCM's colour controls have no backend"
+    grep -q '\-\-apply-custom-theme' "$REPO_ROOT/samurai/scripts/samurai-customize" \
+        || fail "the launcher does not forward the custom-theme command the KCM calls"
+    # Offline half of the KCM's colour path: the scheme must be written (and
+    # valid) even with no Plasma session - that is the point of writing it
+    # before applying.
+    custom_problems=$(python3 - "$REPO_ROOT" <<'PY'
+import os, subprocess, sys, tempfile
+from pathlib import Path
+root = Path(sys.argv[1])
+data = Path(tempfile.mkdtemp())
+config = Path(tempfile.mkdtemp())
+env = {**os.environ, "XDG_DATA_HOME": str(data), "XDG_CONFIG_HOME": str(config)}
+run = subprocess.run(
+    [sys.executable, str(root / "samurai" / "desktop" / "hub" / "samurai_hub_core.py"),
+     "--apply-custom-theme", "kuro", "accent=#123456", "gold=#D4AF37"],
+    capture_output=True, text=True, env=env, timeout=60)
+problems = []
+target = data / "color-schemes" / "samurai-custom-kuro.colors"
+if not target.is_file():
+    problems.append(f"no custom scheme was written ({run.stdout.strip()!r})")
+else:
+    text = target.read_text()
+    for needle in ("ColorScheme=samurai-custom-kuro", "18,52,86", "212,175,55"):
+        if needle not in text:
+            problems.append(f"the custom scheme does not carry {needle}")
+print("\n".join(problems))
+sys.exit(1 if problems else 0)
+PY
+    )
+    [[ -z "$custom_problems" ]] \
+        || fail "saving a custom theme from the KCM's path failed: $custom_problems"
     grep -q 'SimpleKCM' "$KCM/src/ui/main.qml" \
         || fail "the KCM page does not use a KCMUtils root element"
     kcm_json=$(python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$KCM/src/kcm_samurai.json" 2>&1) \

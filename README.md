@@ -155,7 +155,7 @@ armored detached `.sig` when signing is enabled.
 | Architecture & design documentation | Corrected to describe what is built; the aspirational claims and invented baselines have been removed |
 | Foundation decision | Debian 13 `live-build`, approved as a deviation from the Linux-from-Scratch requirement and recorded in [`samurai/docs/architecture.md`](samurai/docs/architecture.md) |
 | Eight KDE `.colors` themes | Implemented: Kuro, Shiro, Ronin, Blood Moon, Moonlight, Cyber Samurai, Sakura, Sunset Blade; 22 wallpapers at 3840x2160 shipped; icons/cursors pending |
-| Samurai Customization Hub | Implemented as a Qt window (`samurai-customize`) with a `kcm_samurai` module in System Settings -> Personalization that opens it: live theme preview, per-role colours, 4K wallpaper gallery with per-screen and rotation support, desktop effects. Sharing is file-based - there is no hosted marketplace |
+| Samurai Customization Hub | Implemented as a Qt window (`samurai-customize`) with a `kcm_samurai` module in System Settings -> Personalization that picks a theme and edits colours: live theme preview, per-role colours, 4K wallpaper gallery with per-screen and rotation support, desktop effects. Sharing is file-based - there is no hosted marketplace |
 | `samurai-ai` CLI | Implemented and smoke-tested; no AI runtime ships, cloud chat not implemented |
 | `samurai-theme` CLI | Applies real KDE color schemes; the install test's desktop phase checks it against a live Plasma session, and run `42392182476` completed that phase green |
 | `samurai-gaming` CLI | Installs `steam-installer`, GameMode, MangoHUD and optional tools; refuses to pretend when `non-free` is off |

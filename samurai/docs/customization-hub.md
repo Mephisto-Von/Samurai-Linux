@@ -24,10 +24,14 @@ KDE color schemes, Plasma wallpaper scripting and `kwriteconfig6`.
 Plasma's System Settings only hosts KCM modules, which are compiled C++/QML
 plugins, and a Python application cannot register itself there. So the image
 builds `kcm_samurai` from `samurai/kcm/` (`kcmutils_add_qml_kcm`): a small
-plugin whose page says where the Hub's features live and has a button that
-opens the window. It is a discovery entry, not a second theme editor; the
-theme itself is applied by the schemes it installs in
-`/usr/share/color-schemes` and by the Hub you get from the button.
+plugin whose page lists the themes, applies one, and edits colours per
+palette role. It reads the themes from the same `presets.json` and applies
+through the same headless commands (`samurai-customize --apply-theme` and
+`--apply-custom-theme`), so a change made there and in the Hub window is the
+same change; applying colours saves a `samurai-custom-<theme>` scheme beside
+the built-in ones in `/usr/share/color-schemes`. The window remains where
+the full editor lives (live preview, wallpaper gallery, effects, library),
+and both paths can open it.
 
 ## Themes
 

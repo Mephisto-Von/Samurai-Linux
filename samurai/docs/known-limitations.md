@@ -105,11 +105,13 @@
   AI runtime to cap.
 
 ## Desktop and Themes
-- **The System Settings entry is a launcher, not a rewrite** - System Settings
-  hosts compiled KCM plugins, so `kcm_samurai` (a small KDE 6 plugin whose
-  page opens the Hub) is built by `build/build.sh` from `samurai/kcm/`. It
-  exists so the Hub is discoverable where users look for appearance
-  settings; the themes, colours and effects still live in the window
+- **The System Settings page is a front end, not a second editor** - System
+  Settings hosts compiled KCM plugins, so `kcm_samurai` (a small KDE 6
+  plugin built by `build/build.sh` from `samurai/kcm/`) drives the same
+  headless commands as the window. Applying colours from the page saves a
+  `samurai-custom-<theme>` scheme rather than editing the built-in one; the
+  wallpapers, live preview, effects and theme library still live in the
+  window, which the page opens
 - **No theme marketplace** - theme packages export and import as `.zip`
   files, and the importer validates them before writing anything, but there is
   no hosted catalog, account or upload: sharing means sending someone a file

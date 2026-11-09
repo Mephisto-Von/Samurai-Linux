@@ -24,7 +24,7 @@ die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || die "python3 is required"
 
 case "${1:-}" in
-    --help|-h|--verify|--list-presets|--list-wallpapers|--next-wallpaper|--render-schemes|--apply-theme|--apply-wallpaper)
+    --help|-h|--verify|--list-presets|--list-wallpapers|--next-wallpaper|--render-schemes|--apply-theme|--apply-wallpaper|--apply-custom-theme)
         case "${1:-}" in
             --render-schemes)
                 shift
