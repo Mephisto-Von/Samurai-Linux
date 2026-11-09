@@ -2,9 +2,10 @@
 
 > **Implemented:** a Qt window (`samurai-customize`) that changes the theme,
 > colours, wallpapers, lock screen and the desktop effects KDE exposes, with a
-> live preview and one-click apply. **Not implemented:** a System Settings KCM
-> module, a hosted theme marketplace, and custom icon or cursor sets (the image
-> still ships none). Wallpapers are 3840x2160.
+> live preview and one-click apply, reachable from a `kcm_samurai` module in
+> System Settings -> Personalization. **Not implemented:** a hosted theme
+> marketplace and custom icon or cursor sets (the image still ships none).
+> Wallpapers are 3840x2160.
 
 The Hub exists so that changing the desktop does not require a terminal. Its
 whole job is to be the friendly front end to things the image already does:
@@ -17,12 +18,16 @@ KDE color schemes, Plasma wallpaper scripting and `kwriteconfig6`.
 | Application launcher | **Samurai Customization Hub** |
 | Desktop icon | On a new account, created from `/etc/skel/Desktop` |
 | Terminal | `samurai-customize` |
+| System Settings | **Personalization -> Samurai Customization Hub** |
 | Without a display | `samurai-customize --core --verify`, `--core --list-presets` |
 
-It is **not** in System Settings. Plasma's System Settings only hosts KCM
-modules, which are C++/QML plugins; a Python application cannot register itself
-there, and claiming otherwise would send people looking in a menu that has
-nothing in it. The launcher entry and the desktop icon are the supported paths.
+Plasma's System Settings only hosts KCM modules, which are compiled C++/QML
+plugins, and a Python application cannot register itself there. So the image
+builds `kcm_samurai` from `samurai/kcm/` (`kcmutils_add_qml_kcm`): a small
+plugin whose page says where the Hub's features live and has a button that
+opens the window. It is a discovery entry, not a second theme editor; the
+theme itself is applied by the schemes it installs in
+`/usr/share/color-schemes` and by the Hub you get from the button.
 
 ## Themes
 
@@ -129,7 +134,9 @@ rather than shipping a download button that fails.
 
 ## What is not built
 
-- **No System Settings module.** See above; a KCM needs KDE plugin development.
+- **The System Settings entry opens the window; it does not replace it.**
+  See "Opening it" above. If the module is built without `cmake` (a warning in
+  `build/build.sh`), the entry is absent and `build/verify-iso.sh` fails.
 - **No marketplace backend.** The validation and packaging exist; the catalog,
   accounts and upload do not.
 - **Icons and cursors.** The image ships no Samurai icon or cursor set, so those

@@ -239,7 +239,8 @@ What it costs, and what is therefore recorded as a known limitation:
 > themes, colours, wallpapers and desktop effects without a terminal; see
 > [`customization-hub.md`](customization-hub.md). There is still no Samurai
 > Control Center, no dashboard package and no first-boot wizard, and the Hub
-> is deliberately not a System Settings KCM. The installed system boots to
+> is reachable from a KCM in System Settings -> Personalization
+> (`kcm_samurai`), which opens the window. The installed system boots to
 > SDDM, and the remaining configuration entry points are the CLIs in
 > `/usr/local/bin` (`samurai-theme`, `samurai-ai`, `samurai-gaming`,
 > `samurai-profile`, `samurai-recovery`). The rest of this section is the

@@ -105,11 +105,11 @@
   AI runtime to cap.
 
 ## Desktop and Themes
-- **The Customization Hub is a standalone app, not a System Settings module** -
-  Plasma's System Settings only hosts KCM plugins, which are C++/QML, so the
-  Hub opens from the application launcher, the desktop icon or
-  `samurai-customize`. It is not in System Settings and will not be without a
-  KCM being written
+- **The System Settings entry is a launcher, not a rewrite** - System Settings
+  hosts compiled KCM plugins, so `kcm_samurai` (a small KDE 6 plugin whose
+  page opens the Hub) is built by `build/build.sh` from `samurai/kcm/`. It
+  exists so the Hub is discoverable where users look for appearance
+  settings; the themes, colours and effects still live in the window
 - **No theme marketplace** - theme packages export and import as `.zip`
   files, and the importer validates them before writing anything, but there is
   no hosted catalog, account or upload: sharing means sending someone a file

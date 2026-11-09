@@ -1146,4 +1146,35 @@ else
     printf 'skip - python3 not installed, the Plasma calls were not checked\n'
 fi
 
+# The KCM is compiled code, so the smoke suite can only assert the sources
+# hang together: the CMake macro that produces the plugin must be the one
+# that generates its service file, the JSON must carry the plugin metadata
+# System Settings reads, and the QML must call the class the C++ registers.
+KCM="$REPO_ROOT/samurai/kcm"
+kcm_ok=true
+for file in CMakeLists.txt src/CMakeLists.txt src/kcm_samurai.cpp src/kcm_samurai.h src/kcm_samurai.json src/ui/main.qml; do
+    [[ -f "$KCM/$file" ]] || fail "the KCM source $file is missing"
+done
+if [[ "$kcm_ok" == "true" ]]; then
+    grep -q 'kcmutils_add_qml_kcm(kcm_samurai)' "$KCM/src/CMakeLists.txt" \
+        || fail "the KCM build does not use kcmutils_add_qml_kcm, so no plugin or service file is produced"
+    grep -q 'K_PLUGIN_CLASS_WITH_JSON' "$KCM/src/kcm_samurai.cpp" \
+        || fail "the KCM C++ does not register its plugin metadata"
+    grep -q 'KQuickConfigModule' "$KCM/src/kcm_samurai.cpp" \
+        || fail "the KCM C++ does not derive from KQuickConfigModule"
+    grep -q 'kcm.openHub' "$KCM/src/ui/main.qml" \
+        || fail "the KCM page does not open the Hub"
+    grep -q 'SimpleKCM' "$KCM/src/ui/main.qml" \
+        || fail "the KCM page does not use a KCMUtils root element"
+    kcm_json=$(python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$KCM/src/kcm_samurai.json" 2>&1) \
+        || fail "kcm_samurai.json is not valid JSON: $kcm_json"
+    grep -q '"X-KDE-System-Settings-Parent-Category"' "$KCM/src/kcm_samurai.json" \
+        || fail "the KCM plugin metadata does not say which System Settings category it belongs to"
+    grep -q 'samurai/kcm' "$REPO_ROOT/build/build.sh" \
+        || fail "build.sh does not build the KCM, so the image ships no System Settings entry"
+    grep -q 'kcm_samurai' "$REPO_ROOT/build/verify-iso.sh" \
+        || fail "verify-iso.sh does not assert kcm_samurai, so a build without the module would pass"
+fi
+ok "the System Settings KCM sources, build step and ISO gate agree"
+
 printf '\nAll %d smoke checks passed.\n' "$pass"

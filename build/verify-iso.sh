@@ -292,6 +292,18 @@ if command -v python3 >/dev/null 2>&1; then
     log "the hub's presets, schemes and wallpapers agree in the image"
 fi
 
+# System Settings -> Personalization shows the Samurai entry only if the KCM
+# plugin and its generated service file made it into the image. build/build.sh
+# bakes the plugin with CMake (CMAKE_INSTALL_LIBDIR=lib/x86_64-linux-gnu);
+# assert by name so a different Debian multiarch path cannot silently lose it.
+systemsettings_kcm=$(find "$ROOT/usr/lib/x86_64-linux-gnu/qt6/plugins/plasma/kcms/systemsettings" \
+    -name 'kcm_samurai.so' -print -quit 2>/dev/null)
+[[ -n "$systemsettings_kcm" ]] || die "no kcm_samurai.so in the image: build.sh did not build the System Settings module (the build host needs cmake plus the Qt6/KF6 dev packages)"
+# The generated service file is what lets kcmshell6 and System Settings list it.
+test -n "$(find "$ROOT/usr/share" -name 'kcm_samurai.desktop' -print -quit 2>/dev/null)" \
+    || die "no kcm_samurai.desktop in the image: the System Settings entry was not generated"
+log "the System Settings module is present"
+
 log "Checking that the live rootfs can run update-grub"
 # Calamares' calamares-bootloader-config helper ends with update-grub, which
 # writes /boot/grub/grub.cfg. The live image never installs GRUB to a disk, so

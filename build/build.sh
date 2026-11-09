@@ -124,12 +124,44 @@ sync_assets() {
         find "$BUILD_DIR/config/hooks" -name '*.hook.chroot' -exec chmod 0755 {} +
     fi
     chmod 0755 "$BUILD_DIR/auto/config"
+    build_kcm
     # The variant's archive, tool list and pin files, and /etc/samurai-variant.
     # A separate script because the rule "staging must remove what the previous
     # build staged before it copies what this one stages" is worth testing on a
     # machine with no live-build on it: see `bash build/stage-variant.sh --self-test`.
     bash "$BUILD_DIR/stage-variant.sh" --variant "$VARIANT" --build-dir "$BUILD_DIR"
     log "Synced scripts, themes and the customization hub into config/includes.chroot"
+}
+
+# The Samurai entry in System Settings is a compiled KCM plugin (Qt/KF6 dev
+# packages on the build host), not a script. It is built here and installed into
+# the include tree with DESTDIR so the image carries exactly the file CMake
+# produced; if the build host lacks the toolchain the image still builds and
+# build/verify-iso.sh counts the missing module as a failure, so nothing ships
+# silently.
+build_kcm() {
+    local includes="$BUILD_DIR/config/includes.chroot"
+    local builddir="$BUILD_DIR/.kcm-build"
+    local plugin_dir="$includes/usr/lib/x86_64-linux-gnu/qt6/plugins/plasma/kcms/systemsettings"
+
+    if ! command -v cmake >/dev/null 2>&1; then
+        warn "cmake is not installed, so kcm_samurai is not built. Install cmake,"
+        warn "extra-cmake-modules, qt6-base-dev, qt6-declarative-dev and the KF6 dev"
+        warn "packages (libkf6config-dev, libkf6coreaddons-dev, libkf6kcmutils-dev,"
+        warn "libkf6i18n-dev) to include the System Settings entry."
+        return 0
+    fi
+
+    # Never leave a .so from an earlier build behind.
+    rm -rf "$plugin_dir" "$builddir"
+    log "Building the Samurai System Settings module (kcm_samurai)"
+    cmake -S "$REPO_ROOT/samurai/kcm" -B "$builddir" \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_INSTALL_LIBDIR=lib/x86_64-linux-gnu >/dev/null || die "configuring kcm_samurai failed"
+    cmake --build "$builddir" || die "building kcm_samurai failed"
+    DESTDIR="$includes" cmake --install "$builddir" >/dev/null || die "installing kcm_samurai failed"
+    [[ -f "$plugin_dir/kcm_samurai.so" ]] || die "the KCM build did not produce $plugin_dir/kcm_samurai.so"
+    log "Installed the System Settings module into config/includes.chroot"
 }
 
 run_config() {

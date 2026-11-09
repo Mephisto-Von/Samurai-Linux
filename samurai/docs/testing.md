@@ -149,6 +149,10 @@ session; it does not prove both palettes. What it asserts today:
   package imports when valid while being refused for a script, a traversal
   path, a symlink, an executable bit, an absolute path and an incomplete
   manifest
+- the System Settings module (`tests/smoke.sh`): the `samurai/kcm/` sources
+  hang together (CMake macro, plugin metadata, QML), `build/build.sh`
+  builds it and `build/verify-iso.sh` asserts the plugin and its generated
+  service file are in the image
 
 Not automated yet, and therefore not claimed:
 

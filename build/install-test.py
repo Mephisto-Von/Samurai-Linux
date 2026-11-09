@@ -2597,6 +2597,103 @@ class InstallerTest:
             if "samurai-shiro" not in config:
                 raise Failure(f"Plasma did not record the shiro scheme in kdeglobals: {config!r}")
 
+            # The Customization Hub. The smoke suite proves its Plasma calls are
+            # well-formed, but only a live session proves they do anything: a tool
+            # that reports success while changing nothing is the failure mode this
+            # phase exists to catch, so every claim is read back from Plasma.
+            hub_files = self.serial.command(
+                "ls -1 /usr/share/samurai/hub/ 2>&1; "
+                "ls -l /usr/local/bin/samurai-customize "
+                "/usr/share/applications/samurai-customize.desktop 2>&1 || true",
+                check=False,
+            )
+            record("Customization Hub files", hub_files)
+            for name in ("samurai_customize.py", "samurai_hub_core.py", "presets.json", "wallpapers.json"):
+                if name not in hub_files:
+                    raise Failure(f"the Hub is incomplete on the installed system: {name} is missing\n{hub_files}")
+
+            # System Settings hosts compiled KCM plugins, so the Hub can only be
+            # there if kcm_samurai.so and its generated service file were built
+            # into the image; list them the way System Settings does.
+            kcm_list = self.session_command("kcmshell6 --list 2>&1 | grep -i samurai || echo not-found")
+            record("kcmshell6 modules", kcm_list)
+            if "kcm_samurai" not in kcm_list:
+                raise Failure(
+                    "kcm_samurai is not listed by kcmshell6, so System Settings has "
+                    f"no Samurai entry:\n{kcm_list}"
+                )
+
+            hub_verify = self.session_command("samurai-customize --core --verify 2>&1; echo rc=$?")
+            record("hub --verify", hub_verify)
+            if "rc=0" not in hub_verify:
+                raise Failure(f"the Hub's own --verify fails on the installed system:\n{hub_verify}")
+
+            # A theme applied through the Hub's code path, not through
+            # samurai-theme: ronin is one of the six themes that only the Hub
+            # knows a wallpaper for, so this also proves the presets carry one.
+            hub_apply = self.session_command("samurai-customize --apply-theme ronin 2>&1; echo rc=$?")
+            record("hub apply ronin", hub_apply)
+            if "rc=0" not in hub_apply:
+                raise Failure(f"the Hub could not apply the ronin theme on a live session:\n{hub_apply}")
+
+            ronin_config = self.session_command(
+                "for g in KDE General; do printf '%s=' \"$g\"; kreadconfig6 --file kdeglobals "
+                '--group "$g" --key ColorScheme 2>/dev/null; echo; done'
+            )
+            record("kdeglobals ColorScheme after the Hub", ronin_config)
+            if "samurai-ronin" not in ronin_config:
+                raise Failure(
+                    "the Hub applied ronin but Plasma recorded a different colour scheme: "
+                    f"{ronin_config!r}"
+                )
+
+            ronin_wallpaper = ""
+            for _ in range(20):
+                ronin_wallpaper = self._script_reply_value(
+                    self.plasma_script("desktops()[0].wallpaper")
+                )
+                if ronin_wallpaper.endswith("/misty-forest.jpg"):
+                    break
+                time.sleep(1)
+            record("Plasma wallpaper after the Hub", ronin_wallpaper)
+            if not ronin_wallpaper.endswith("/misty-forest.jpg"):
+                raise Failure(
+                    "the Hub applied ronin but Plasma paints a different wallpaper: "
+                    f"{ronin_wallpaper!r}"
+                )
+
+            # The window has to open on this session, not merely be installed:
+            # PySide6 loading under Wayland with a software renderer is exactly
+            # what a user would hit, and what the build host cannot test.
+            hub_window = self.session_command(
+                "rm -f /tmp/hub-window.log; "
+                "setsid samurai-customize > /tmp/hub-window.log 2>&1 & "
+                "for i in $(seq 1 30); do "
+                "pgrep -u samurai -f 'hub/samurai_customize.py' >/dev/null && break; sleep 2; done; "
+                "sleep 10; "
+                "pgrep -u samurai -f 'hub/samurai_customize.py' >/dev/null "
+                "&& echo window=alive || echo window=died; "
+                "tail -n 20 /tmp/hub-window.log 2>/dev/null || true",
+                timeout=180,
+            )
+            record("Hub window", hub_window)
+            if "window=alive" not in hub_window:
+                raise Failure(f"the Hub window did not stay open on the desktop session:\n{hub_window}")
+            self.vnc.wake()
+            hub_shot = self.vnc.stable_capture("10-hub-window.png")
+            record("Hub window screenshot", f"{hub_shot.name}; kept for review")
+            self.session_command(
+                "pkill -f 'hub/samurai_customize.py' >/dev/null 2>&1 || true; echo closed",
+                timeout=60,
+            )
+
+            # The rest of this phase samples the shiro desktop, so put it back
+            # through the same path rather than assuming the Hub left it alone.
+            hub_restore = self.session_command("samurai-customize --apply-theme shiro 2>&1; echo rc=$?")
+            record("hub restore shiro", hub_restore)
+            if "rc=0" not in hub_restore:
+                raise Failure(f"the Hub could not put the desktop back on shiro:\n{hub_restore}")
+
             gaming = self.session_command("samurai-gaming status 2>&1")
             record("samurai-gaming status", gaming)
             for tool in ("mangohud", "gamemoderun"):

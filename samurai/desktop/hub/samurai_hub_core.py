@@ -1169,11 +1169,48 @@ With no option the Hub window opens.
   --next-wallpaper   Apply the next (or a random) wallpaper; used by the
                      rotation timer
   --shuffle          With --next-wallpaper, pick a random wallpaper
+  --apply-theme      Apply a built-in theme (colours + its wallpaper) as the
+                     Hub would, on the session bus the caller is in
+  --apply-wallpaper  Apply one installed wallpaper by name
   --list-presets     Print the built-in themes
   --list-wallpapers  Print the installed wallpapers
   --verify           Check that the installed data files are consistent
   --help             Show this text
 """
+
+
+def apply_preset(paths: Paths, slug: str) -> tuple[bool, list[str]]:
+    """Apply a built-in theme exactly as the window does, without a window.
+
+    Used by the Plasma check that runs inside a live session: it must exercise
+    the Hub's own apply path, not a copy of it, or the check proves nothing.
+    """
+    notes: list[str] = []
+    presets = load_presets(paths)
+    try:
+        preset = load_preset(slug, presets)
+    except KeyError:
+        return False, [f"no theme called {slug!r}; have: " + ", ".join(p.slug for p in presets)]
+    text = theme_scheme_text(paths, preset.slug)
+    if text is None:
+        return False, [f"{preset.slug}: no committed scheme in {paths.themes}"]
+    problems = scheme_problems(text, preset.scheme_id)
+    if problems:
+        return False, [f"{preset.slug}: {problem}" for problem in problems]
+    ok, message = apply_scheme(preset.scheme_id)
+    notes.append(f"scheme {preset.scheme_id}: {message}")
+    if not ok:
+        return False, notes
+    if preset.wallpaper:
+        wallpaper = find_wallpaper(paths, preset.wallpaper)
+        if wallpaper is None:
+            return False, notes + [f"{preset.slug}: wallpaper {preset.wallpaper!r} is not installed"]
+        ok, message = apply_wallpaper(wallpaper.path)
+        notes.append(f"wallpaper {wallpaper.stem}: {message}")
+        if not ok:
+            return False, notes
+    write_theme_marker(paths, preset.slug)
+    return True, notes
 
 
 def main(argv: list[str]) -> int:
@@ -1196,6 +1233,25 @@ def main(argv: list[str]) -> int:
         return 0 if ok else 1
     if "--verify" in args:
         return verify(paths)
+    for flag in ("--apply-theme", "--apply-wallpaper"):
+        if flag not in args:
+            continue
+        index = args.index(flag)
+        value = args[index + 1] if index + 1 < len(args) else ""
+        if not value or value.startswith("--"):
+            print(f"{flag} needs a name", file=sys.stderr)
+            return 2
+        if flag == "--apply-theme":
+            ok, notes = apply_preset(paths, value)
+        else:
+            wallpaper = find_wallpaper(paths, value)
+            if wallpaper is None:
+                print(f"no wallpaper called {value!r}", file=sys.stderr)
+                return 1
+            ok, message = apply_wallpaper(wallpaper.path)
+            notes, ok = [f"wallpaper {wallpaper.stem}: {message}"], ok
+        print("\n".join(notes))
+        return 0 if ok else 1
     print(USAGE.rstrip(), file=sys.stderr)
     return 2
 

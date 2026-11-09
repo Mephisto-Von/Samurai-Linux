@@ -116,6 +116,8 @@ Sakura and Sunset Blade. The palettes live in one file
 from it, so what the Hub shows and what Plasma installs are the same colours.
 See [`customization-hub.md`](customization-hub.md).
 
+- **System Settings -> Personalization -> Samurai Customization Hub** - the
+  `kcm_samurai` module; its page opens the window below
 - **Samurai Customization Hub** - `samurai-customize` opens a window with live
   theme preview, per-role colour editing, a 4K wallpaper gallery, multi-monitor
   and rotation support, and desktop effects

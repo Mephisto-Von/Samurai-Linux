@@ -21,8 +21,10 @@ Install the tools on the build host:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y live-build debootstrap xorriso squashfs-tools gnupg
+sudo apt-get install -y live-build debootstrap xorriso squashfs-tools gnupg cmake extra-cmake-modules qt6-base-dev qt6-declarative-dev libkf6config-dev libkf6coreaddons-dev libkf6kcmutils-dev libkf6i18n-dev
 ```
+
+The `cmake` and Qt/KF6 dev packages are needed to compile `samurai/kcm` (the `kcm_samurai` module in System Settings). Without them an ISO still builds, but `build/build.sh` logs a warning and `build/verify-iso.sh` fails on the missing module, so it cannot ship silently.
 
 > Build on a real Linux filesystem (ext4/xfs/btrfs). Do not build inside `/mnt/c` or `/mnt/d` under WSL: `chroot` and package maintainer scripts need Unix permissions and device nodes.
 
@@ -312,6 +314,7 @@ GPU in QEMU).
 | `samurai/desktop/` | The Customization Hub: Qt window, presets, data, launcher entry |
 | `Samurai Walls/` | Source art for the wallpapers and installer slide |
 | `build/make-wallpapers.py` | Generates 3840x2160 wallpapers + the Calamares slide from that art |
+| `samurai/kcm/` | The System Settings entry: `kcm_samurai`, a compiled KF6 KCM that opens the Hub (`build/build.sh` builds it with CMake) |
 
 The generated copies under `build/config/includes.chroot/usr/local/bin/` and `.../usr/share/samurai/themes/` are ignored by Git; `build.sh` recreates them on every run. The generated wallpapers under `.../usr/share/backgrounds/samurai/` and `.../etc/calamares/branding/samurai/slide1.png` **are** committed, so ISO builds do not need Pillow; rerun `python3 build/make-wallpapers.py` after changing the source art.
 

@@ -22,7 +22,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends live-build debootstrap xorriso squashfs-tools gnupg
+          sudo apt-get install -y --no-install-recommends live-build debootstrap xorriso squashfs-tools gnupg cmake extra-cmake-modules qt6-base-dev qt6-declarative-dev libkf6config-dev libkf6coreaddons-dev libkf6kcmutils-dev libkf6i18n-dev
       - name: Check host
         run: sudo -E bash build/build.sh --check
       - name: Build ISO

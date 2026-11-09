@@ -1,0 +1,10 @@
+{
+    "KPlugin": {
+        "Category": "Samurai",
+        "Description": "Open the Samurai Customization Hub: themes, colours and wallpapers.",
+        "Icon": "preferences-desktop-color",
+        "Name": "Samurai Customization Hub"
+    },
+    "X-KDE-Keywords": "wallpaper,theme,colours,colors,appearance,samurai",
+    "X-KDE-System-Settings-Parent-Category": "personalization"
+}
