@@ -43,6 +43,20 @@ reaches for within the first day.
 | Printing + scanning | CUPS + Simple Scan (scanner) | — |
 | Backup | Déjà Dup | — (old image had `bup`) |
 | Cloud-init / automated provisioning | cloud-init | — |
+
+## Everyday value (missing roles)
+
+| Missing role | Ubuntu has | Notes |
+|---|---|---|
+| Office suite | LibreOffice | No equivalent — Okular/Kate are not a suite |
+| Email + calendar | Thunderbird, GNOME Calendar | Both existed in your 2026.11.05 image (kmail, korganizer) and were dropped from the current package list |
+| Printing + scanning | CUPS + Simple Scan | Absent |
+| Backup | Déjà Dup | Absent (old image had bup) |
+| Torrent client | Transmission | Absent |
+| Video/photos | Totem, Shotwell | Dragon Player (old image only) |
+| cloud-init/automation | Yes | Absent |
+
+## Security depth
 | Accessibility | `brltty` | — |
 
 ## Security depth (what Kali's repo offers and Samurai does not)

@@ -1,0 +1,38 @@
+# Samurai Linux package list for chroot ISO build
+# This file lists packages installed into the live system chroot environment.
+
+# Core system
+kde-standard
+kde-plasma-desktop
+sddm
+calamares
+grub-pc
+efibootmgr
+
+# Desktop environment
+networkmanager
+discover
+system-config-printer
+simple-scan
+
+# Office and productivity
+libreoffice-core
+thunderbird
+korganizer
+
+# Media and entertainment
+dragonplayer
+shotwell
+transmission-gtk
+
+# Backup and cloud
+bup
+borgbackup
+cloud-init
+
+# Themes and customization
+librewpe
+color-schemes
+
+# Meta
+task-samurai-desktop

@@ -81,6 +81,18 @@ menuentry 'Install Samurai Linux' {
 - **AI/Developer combo** - developer tools + AI runtime
 - **Full install** - everything included
 
+**Recommended add-ons for day-1 usability** (can be selected with developer/gaming profiles or added separately):
+
+- `libreoffice` - office suite (Writer/Calc/Impress)
+- `thunderbird` - email client
+- `korganizer` - calendar
+- `system-config-printer` + `simple-scan` - printing and scanning
+- `transmission-gtk` - torrent client
+- `dragonplayer` - video player
+- `shotwell` - photo manager
+- `bup` or `borgbackup` - backup tool
+- `cloud-init` - automated provisioning
+
 ### 8. Developer and Gaming Profiles
 ```bash
 # Select developer profile

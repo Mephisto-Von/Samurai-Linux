@@ -29,6 +29,17 @@
 - Java JDK with javac
 - Shell utilities (bash, zsh, fish)
 
+**Recommended for day-1 usability**:
+- `libreoffice` - office suite
+- `thunderbird` - email
+- `korganizer` - calendar
+- `system-config-printer` + `simple-scan` - printing/scan
+- `transmission-gtk` - torrent
+- `dragonplayer` - video
+- `shotwell` - photos
+- `bup` or `borgbackup` - backup
+- `cloud-init` - automated provisioning
+
 ## Editors and IDEs
 
 ### VS Code-Compatible Workflows
